@@ -1,8 +1,9 @@
-import { PluginSlot, type TPluginComponentsMapBySlotId } from '@sharkord/plugin-sdk';
+import type { TPluginComponentsMapBySlotId } from '@sharkord/plugin-sdk';
 import { SoundboardLauncher } from './components/soundboard-launcher';
 
 const components: TPluginComponentsMapBySlotId = {
-  [PluginSlot.TOPBAR_RIGHT]: [SoundboardLauncher]
+  topbar_right: [SoundboardLauncher],
+  chat_actions: [SoundboardLauncher]
 };
 
 export { components };

@@ -1,6 +1,5 @@
 import { createWSClient, wsLink, createTRPCProxyClient } from '@trpc/client';
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { Button, Input } from '@sharkord/ui';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
@@ -45,6 +44,7 @@ const fileToBase64 = (file: File) =>
 
 const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
   const { trpc, close } = usePluginTrpc();
+  console.info('[soundboard] panel mounted', { currentVoiceChannelId });
 
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
@@ -65,6 +65,7 @@ const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
   );
 
   const refresh = useCallback(async () => {
+    console.info('[soundboard] refreshing sounds list');
     const response = (await runCommand('list_sounds')) as { sounds: TSoundEntry[] };
     setSounds(response.sounds || []);
   }, [runCommand]);
@@ -86,6 +87,7 @@ const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
     setError(null);
 
     try {
+      console.info('[soundboard] uploading sound', { name, emoji, mimeType: file.type });
       const dataBase64 = await fileToBase64(file);
 
       await runCommand('upload_sound', {
@@ -107,6 +109,7 @@ const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
 
   const onPlay = useCallback(
     async (soundId: string) => {
+      console.info('[soundboard] playing sound', { soundId, currentVoiceChannelId });
       setLoading(true);
       setError(null);
       try {
@@ -133,30 +136,51 @@ const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
         {sounds.map((sound) => (
-          <Button key={sound.id} disabled={!currentVoiceChannelId || loading} onClick={() => onPlay(sound.id)}>
+          <button
+            key={sound.id}
+            disabled={!currentVoiceChannelId || loading}
+            onClick={() => onPlay(sound.id)}
+            className="rounded border px-2 py-1 disabled:opacity-50"
+          >
             {sound.emoji} {sound.name}
-          </Button>
+          </button>
         ))}
       </div>
 
       <div className="flex gap-2">
-        <Button variant="outline" onClick={() => refresh()}>
+        <button type="button" className="rounded border px-2 py-1" onClick={() => refresh()}>
           Refresh
-        </Button>
+        </button>
       </div>
 
       <div className="border rounded-md p-3 flex flex-col gap-2">
         <h3 className="font-medium">Upload Sound</h3>
-        <Input value={name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)} placeholder="Sound name" />
-        <Input value={emoji} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmoji(e.target.value)} placeholder="Emoji" maxLength={8} />
+        <input
+          value={name}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
+          placeholder="Sound name"
+          className="rounded border bg-transparent px-2 py-1"
+        />
+        <input
+          value={emoji}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmoji(e.target.value)}
+          placeholder="Emoji"
+          maxLength={8}
+          className="rounded border bg-transparent px-2 py-1"
+        />
         <input
           type="file"
           accept="audio/*"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
         />
-        <Button disabled={!file || !name || !emoji || loading} onClick={onUpload}>
+        <button
+          type="button"
+          disabled={!file || !name || !emoji || loading}
+          onClick={onUpload}
+          className="rounded border px-2 py-1 disabled:opacity-50"
+        >
           Upload to Shared Soundboard
-        </Button>
+        </button>
       </div>
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
