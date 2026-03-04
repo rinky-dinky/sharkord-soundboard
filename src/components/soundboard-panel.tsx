@@ -1,0 +1,167 @@
+import { createWSClient, wsLink, createTRPCProxyClient } from '@trpc/client';
+import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
+import { Button, Input } from '@sharkord/ui';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { TSoundEntry } from '../types';
+
+const getPluginId = () => 'sharkord-soundboard';
+
+const usePluginTrpc = () => {
+  return useMemo(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const host = window.location.host;
+
+    const wsClient = createWSClient({
+      url: `${protocol}://${host}`,
+      connectionParams: async () => ({
+        token: sessionStorage.getItem('sharkord-token') || ''
+      })
+    });
+
+    const trpc = createTRPCProxyClient<any>({
+      links: [wsLink({ client: wsClient })]
+    });
+
+    return { trpc, close: () => wsClient.close() };
+  }, []);
+};
+
+const fileToBase64 = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== 'string') {
+        reject(new Error('Invalid file read.'));
+        return;
+      }
+
+      const comma = result.indexOf(',');
+      resolve(comma > -1 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Could not read file.'));
+    reader.readAsDataURL(file);
+  });
+
+const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
+  const { trpc, close } = usePluginTrpc();
+
+  const [sounds, setSounds] = useState<TSoundEntry[]>([]);
+  const [name, setName] = useState('');
+  const [emoji, setEmoji] = useState('🦈');
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const runCommand = useCallback(
+    async (commandName: string, args?: Record<string, unknown>) => {
+      return (trpc as any).plugins.executeCommand.mutate({
+        pluginId: getPluginId(),
+        commandName,
+        args
+      });
+    },
+    [trpc]
+  );
+
+  const refresh = useCallback(async () => {
+    const response = (await runCommand('list_sounds')) as { sounds: TSoundEntry[] };
+    setSounds(response.sounds || []);
+  }, [runCommand]);
+
+  useEffect(() => {
+    refresh().catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      void close();
+    };
+  }, [refresh, close]);
+
+  const onUpload = useCallback(async () => {
+    if (!file) {
+      setError('Choose a file first.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const dataBase64 = await fileToBase64(file);
+
+      await runCommand('upload_sound', {
+        name,
+        emoji,
+        mimeType: file.type || 'audio/mpeg',
+        dataBase64
+      });
+
+      setFile(null);
+      setName('');
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [emoji, file, name, refresh, runCommand]);
+
+  const onPlay = useCallback(
+    async (soundId: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        await runCommand('play_sound', { soundId });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [runCommand]
+  );
+
+
+  return (
+    <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
+      <h2 className="text-xl font-semibold">Sharkord Soundboard</h2>
+
+      <p className="text-sm opacity-70">
+        {currentVoiceChannelId
+          ? 'Click a sound to play it in your active voice call.'
+          : 'Join a voice channel to play sounds.'}
+      </p>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+        {sounds.map((sound) => (
+          <Button key={sound.id} disabled={!currentVoiceChannelId || loading} onClick={() => onPlay(sound.id)}>
+            {sound.emoji} {sound.name}
+          </Button>
+        ))}
+      </div>
+
+      <div className="flex gap-2">
+        <Button variant="outline" onClick={() => refresh()}>
+          Refresh
+        </Button>
+      </div>
+
+      <div className="border rounded-md p-3 flex flex-col gap-2">
+        <h3 className="font-medium">Upload Sound</h3>
+        <Input value={name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)} placeholder="Sound name" />
+        <Input value={emoji} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmoji(e.target.value)} placeholder="Emoji" maxLength={8} />
+        <input
+          type="file"
+          accept="audio/*"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+        />
+        <Button disabled={!file || !name || !emoji || loading} onClick={onUpload}>
+          Upload to Shared Soundboard
+        </Button>
+      </div>
+
+      {error ? <p className="text-sm text-red-500">{error}</p> : null}
+    </div>
+  );
+};
+
+export { SoundboardPanel };

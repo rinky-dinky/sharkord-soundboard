@@ -1,0 +1,261 @@
+import { spawn } from 'node:child_process';
+import { constants as fsConstants } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { access } from 'node:fs/promises';
+import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
+import { type TListSoundsResponse, type TSoundEntry } from './types';
+
+const SOUNDS_SETTINGS_KEY = 'soundsJson';
+const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 2;
+
+const getFfmpegBinaryPath = (pluginPath: string) => {
+  const binaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  return join(pluginPath, 'bin', binaryName);
+};
+
+const assertFfmpegBinary = async (pluginPath: string) => {
+  const ffmpegPath = getFfmpegBinaryPath(pluginPath);
+
+  try {
+    await access(ffmpegPath, fsConstants.X_OK);
+    return ffmpegPath;
+  } catch {
+    throw new Error(
+      `Missing required ffmpeg binary at "${ffmpegPath}". ` +
+        'Install ffmpeg in this plugin under bin/ (bin/ffmpeg on Linux/macOS, bin/ffmpeg.exe on Windows).'
+    );
+  }
+};
+
+type TRuntimePlayback = {
+  producer: Producer;
+  transport: PlainTransport;
+  streamHandleRemove: () => void;
+  ffmpegPid?: number;
+};
+
+const soundsCache: { get: (() => Promise<TSoundEntry[]>) | null; set: ((sounds: TSoundEntry[]) => Promise<void>) | null } = {
+  get: null,
+  set: null
+};
+const activePlaybackByUser = new Map<number, TRuntimePlayback>();
+
+const parseSounds = (raw: unknown): TSoundEntry[] => {
+  if (typeof raw !== 'string' || raw.length === 0) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as TSoundEntry[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry) =>
+      entry &&
+      typeof entry.id === 'string' &&
+      typeof entry.name === 'string' &&
+      typeof entry.emoji === 'string' &&
+      typeof entry.mimeType === 'string' &&
+      typeof entry.dataBase64 === 'string' &&
+      typeof entry.createdByUserId === 'number' &&
+      typeof entry.createdAt === 'number'
+    );
+  } catch {
+    return [];
+  }
+};
+
+const stopPlaybackForUser = (ctx: PluginContext, userId: number) => {
+  const playback = activePlaybackByUser.get(userId);
+  if (!playback) return;
+
+  playback.streamHandleRemove();
+  playback.producer.close();
+  playback.transport.close();
+
+  if (playback.ffmpegPid) {
+    try {
+      process.kill(playback.ffmpegPid, 'SIGTERM');
+    } catch (error) {
+      ctx.debug('Could not stop ffmpeg process', error);
+    }
+  }
+
+  activePlaybackByUser.delete(userId);
+};
+
+const onLoad = async (ctx: PluginContext) => {
+  ctx.log('Soundboard plugin loaded');
+  const ffmpegBinaryPath = await assertFfmpegBinary(ctx.path);
+  ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
+
+  const settings = await ctx.settings.register([
+    {
+      key: SOUNDS_SETTINGS_KEY,
+      name: 'Shared soundboard data (JSON)',
+      description: 'Managed by the soundboard plugin. Do not edit manually.',
+      type: 'string',
+      defaultValue: '[]'
+    }
+  ] as const);
+
+  soundsCache.get = async () => parseSounds(await settings.get(SOUNDS_SETTINGS_KEY));
+  soundsCache.set = async (sounds: TSoundEntry[]) => settings.set(SOUNDS_SETTINGS_KEY, JSON.stringify(sounds));
+
+  ctx.ui.enable();
+
+  ctx.commands.register({
+    name: 'list_sounds',
+    description: 'Returns all shared soundboard sounds.',
+    args: [],
+    async executes() {
+      const sounds = await soundsCache.get!();
+      const payload: TListSoundsResponse = { sounds };
+      return payload;
+    }
+  });
+
+  ctx.commands.register({
+    name: 'upload_sound',
+    description: 'Upload a new sound to the shared soundboard.',
+    args: [
+      { name: 'name', type: 'string', required: true },
+      { name: 'emoji', type: 'string', required: true },
+      { name: 'mimeType', type: 'string', required: true },
+      { name: 'dataBase64', type: 'string', required: true }
+    ],
+    async executes(invokerCtx: TInvokerContext, args: { name: string; emoji: string; mimeType: string; dataBase64: string }) {
+      const name = args.name.trim();
+      const emoji = args.emoji.trim();
+
+      if (!name) throw new Error('Sound name is required.');
+      if (!emoji) throw new Error('An emoji is required.');
+      if (!args.dataBase64) throw new Error('Sound data is required.');
+
+      const estimatedBytes = Buffer.byteLength(args.dataBase64, 'base64');
+      if (estimatedBytes > MAX_FILE_SIZE_BYTES) {
+        throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
+      }
+
+      const sounds = await soundsCache.get!();
+      const nextSound: TSoundEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        emoji,
+        mimeType: args.mimeType,
+        dataBase64: args.dataBase64,
+        createdByUserId: invokerCtx.userId,
+        createdAt: Date.now()
+      };
+
+      sounds.push(nextSound);
+      await soundsCache.set!(sounds);
+
+      return nextSound;
+    }
+  });
+
+  ctx.commands.register({
+    name: 'play_sound',
+    description: 'Play a sound in your current voice channel.',
+    args: [{ name: 'soundId', type: 'string', required: true }],
+    async executes(invokerCtx: TInvokerContext, args: { soundId: string }) {
+      if (!invokerCtx.currentVoiceChannelId) {
+        throw new Error('Join a voice channel before using the soundboard.');
+      }
+
+      const channelId = invokerCtx.currentVoiceChannelId;
+      const sounds = await soundsCache.get!();
+      const sound = sounds.find((entry) => entry.id === args.soundId);
+      if (!sound) throw new Error('Sound not found.');
+
+      stopPlaybackForUser(ctx, invokerCtx.userId);
+
+      const router = ctx.actions.voice.getRouter(channelId);
+      const { announcedAddress, ip } = ctx.actions.voice.getListenInfo();
+
+      const transport = await router.createPlainTransport({
+        listenIp: {
+          ip,
+          announcedIp: announcedAddress
+        },
+        rtcpMux: true,
+        comedia: true,
+        enableSrtp: false
+      });
+
+      const producer = await transport.produce({
+        kind: 'audio',
+        rtpParameters: {
+          codecs: [
+            {
+              mimeType: 'audio/opus',
+              payloadType: 111,
+              clockRate: 48000,
+              channels: 2,
+              parameters: {
+                useinbandfec: 1,
+                minptime: 10
+              },
+              rtcpFeedback: []
+            }
+          ],
+          encodings: [{ ssrc: 22222222 }]
+        }
+      });
+
+      const streamHandle = ctx.actions.voice.createStream({
+        channelId,
+        title: `🔊 ${sound.name}`,
+        key: `soundboard-${invokerCtx.userId}`,
+        producers: { audio: producer }
+      });
+
+      const tmpDir = join(tmpdir(), 'sharkord-soundboard');
+      await mkdir(tmpDir, { recursive: true });
+      const inputPath = join(tmpDir, `sound-${invokerCtx.userId}-${Date.now()}.bin`);
+      await writeFile(inputPath, Buffer.from(sound.dataBase64, 'base64'));
+
+      const ffmpeg = spawn(ffmpegBinaryPath, [
+        '-re',
+        '-i',
+        inputPath,
+        '-vn',
+        '-ac',
+        '2',
+        '-ar',
+        '48000',
+        '-c:a',
+        'libopus',
+        '-f',
+        'rtp',
+        `rtp://127.0.0.1:${transport.tuple.localPort}?pkt_size=1200`
+      ]);
+
+      const playback: TRuntimePlayback = {
+        producer,
+        transport,
+        streamHandleRemove: streamHandle.remove,
+        ffmpegPid: ffmpeg.pid
+      };
+
+      activePlaybackByUser.set(invokerCtx.userId, playback);
+
+      ffmpeg.on('exit', async () => {
+        stopPlaybackForUser(ctx, invokerCtx.userId);
+        await rm(inputPath, { force: true });
+      });
+
+      return { ok: true };
+    }
+  });
+};
+
+const onUnload = (ctx: PluginContext) => {
+  for (const userId of activePlaybackByUser.keys()) {
+    stopPlaybackForUser(ctx, userId);
+  }
+
+  ctx.ui.disable();
+  ctx.log('Soundboard plugin unloaded');
+};
+
+export { onLoad, onUnload };
