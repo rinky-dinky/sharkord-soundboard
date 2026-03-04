@@ -7,11 +7,43 @@ const outdir = `dist/${pluginId}`;
 const clientGlobals: BunPlugin = {
   name: 'client-globals',
   setup(build) {
+    const jsxRuntimeFactory = `(() => {
+      const runtime = window.__SHARKORD_REACT_JSX__
+        || window.__SHARKORD_REACT_JSX_DEV__
+        || window.ReactJSX
+        || null;
+      const react = window.__SHARKORD_REACT__ || window.React || null;
+
+      if (runtime?.jsx && runtime?.jsxs) {
+        return runtime;
+      }
+
+      if (!react?.createElement) {
+        return runtime || react || {};
+      }
+
+      const create = (type, props, key) => {
+        const nextProps = props ? { ...props } : {};
+
+        if (key !== undefined) {
+          nextProps.key = key;
+        }
+
+        return react.createElement(type, nextProps);
+      };
+
+      return {
+        jsx: create,
+        jsxs: create,
+        Fragment: react.Fragment
+      };
+    })()`;
+
     const globals: Record<string, string> = {
       react: 'window.__SHARKORD_REACT__',
-      'react/jsx-runtime': 'window.__SHARKORD_REACT_JSX__',
+      'react/jsx-runtime': jsxRuntimeFactory,
       'react/jsx-dev-runtime': `(() => {
-        const runtime = window.__SHARKORD_REACT_JSX_DEV__ || window.__SHARKORD_REACT_JSX__;
+        const runtime = ${jsxRuntimeFactory};
 
         if (!runtime?.jsxDEV && runtime?.jsx) {
           return {
