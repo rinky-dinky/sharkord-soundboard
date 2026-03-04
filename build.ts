@@ -10,7 +10,18 @@ const clientGlobals: BunPlugin = {
     const globals: Record<string, string> = {
       react: 'window.__SHARKORD_REACT__',
       'react/jsx-runtime': 'window.__SHARKORD_REACT_JSX__',
-      'react/jsx-dev-runtime': 'window.__SHARKORD_REACT_JSX_DEV__',
+      'react/jsx-dev-runtime': `(() => {
+        const runtime = window.__SHARKORD_REACT_JSX_DEV__ || window.__SHARKORD_REACT_JSX__;
+
+        if (!runtime?.jsxDEV && runtime?.jsx) {
+          return {
+            ...runtime,
+            jsxDEV: (type, props, key) => runtime.jsx(type, { ...props, key })
+          };
+        }
+
+        return runtime;
+      })()`,
       'react-dom': 'window.__SHARKORD_REACT_DOM__',
       'react-dom/client': 'window.__SHARKORD_REACT_DOM_CLIENT__'
     };
