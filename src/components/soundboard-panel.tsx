@@ -64,7 +64,7 @@ const unwrapCommandResponse = <T,>(response: unknown): T => {
   return response as T;
 };
 
-const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => {
+const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sharkordGlobal = (window as any)?.sharkord;
 
@@ -112,18 +112,33 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => 
     sharkordGlobal?.plugins?.execute
   ];
 
-  for (const candidate of candidates) {
-    const executor = callCommand(candidate);
-    if (executor) {
-      return executor;
-    }
-  }
-
   if (!trpcExecutor) {
     trpcExecutor = createTrpcExecutor();
   }
+  const fallbackExecutor = trpcExecutor;
 
-  return trpcExecutor;
+  return async (commandName, args) => {
+    let lastError: unknown = null;
+
+    for (const candidate of candidates) {
+      const executor = callCommand(candidate);
+      if (!executor) continue;
+
+      try {
+        return await executor(commandName, args);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    try {
+      return await fallbackExecutor(commandName, args);
+    } catch (error) {
+      const fallbackError = error instanceof Error ? error.message : String(error);
+      const bridgeError = lastError instanceof Error ? lastError.message : String(lastError || 'none');
+      throw new Error(`Unable to invoke soundboard command. Bridge error: ${bridgeError}. TRPC fallback error: ${fallbackError}.`);
+    }
+  };
 };
 
 const fileToBase64 = (file: File) =>
@@ -160,10 +175,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
   const runCommand = useCallback(
     async (commandName: string, args?: Record<string, unknown>) => {
-      if (!executeCommand) {
-        throw new Error('Soundboard command bridge is unavailable in this Sharkord build.');
-      }
-
       return executeCommand(commandName, args);
     },
     [executeCommand]
