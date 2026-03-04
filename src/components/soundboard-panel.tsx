@@ -6,6 +6,10 @@ const getPluginId = () => 'sharkord-soundboard';
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
+const debugLog = (event: string, details?: Record<string, unknown>) => {
+  console.info('[soundboard][debug]', event, details || {});
+};
+
 const unwrapCommandResponse = <T,>(response: unknown): T => {
   if (response && typeof response === 'object') {
     const envelope = response as Record<string, unknown>;
@@ -30,7 +34,7 @@ const unwrapCommandResponse = <T,>(response: unknown): T => {
   return response as T;
 };
 
-const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => {
+const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sharkordGlobal = (window as any)?.sharkord;
 
@@ -41,20 +45,38 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => 
 
     return async (commandName, args) => {
       const pluginId = getPluginId();
-      const attemptCalls: Array<() => unknown> = [
-        () => candidate({ pluginId, commandName, args }),
-        () => candidate(pluginId, commandName, args),
-        () => candidate(`${pluginId}:${commandName}`, args),
-        () => candidate(commandName, args)
+      const attemptCalls: Array<{ label: string; call: () => unknown }> = [
+        {
+          label: 'object:{pluginId,commandName,args}',
+          call: () => candidate({ pluginId, commandName, args })
+        },
+        {
+          label: 'args:(pluginId,commandName,args)',
+          call: () => candidate(pluginId, commandName, args)
+        },
+        {
+          label: 'args:(pluginId:commandName,args)',
+          call: () => candidate(`${pluginId}:${commandName}`, args)
+        },
+        {
+          label: 'args:(commandName,args)',
+          call: () => candidate(commandName, args)
+        }
       ];
 
       let lastError: unknown = null;
       for (const attempt of attemptCalls) {
         try {
-          const response = await Promise.resolve(attempt());
+          const response = await Promise.resolve(attempt.call());
+          debugLog('command.execute.bridge.call-success', { commandName, signature: attempt.label });
           return unwrapCommandResponse(response);
         } catch (error) {
           lastError = error;
+          debugLog('command.execute.bridge.call-failure', {
+            commandName,
+            signature: attempt.label,
+            error: error instanceof Error ? error.message : String(error)
+          });
         }
       }
 
@@ -63,29 +85,54 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => 
   };
 
   const candidates = [
-    runtimeCtx?.executeCommand,
-    runtimeCtx?.executePluginCommand,
-    runtimeCtx?.invokePluginCommand,
-    runtimeCtx?.commands?.execute,
-    runtimeCtx?.commands?.executeCommand,
-    runtimeCtx?.plugins?.executeCommand,
-    runtimeCtx?.plugins?.execute,
-    sharkordGlobal?.executeCommand,
-    sharkordGlobal?.executePluginCommand,
-    sharkordGlobal?.commands?.execute,
-    sharkordGlobal?.commands?.executeCommand,
-    sharkordGlobal?.plugins?.executeCommand,
-    sharkordGlobal?.plugins?.execute
+    { name: 'ctx.executeCommand', fn: runtimeCtx?.executeCommand },
+    { name: 'ctx.executePluginCommand', fn: runtimeCtx?.executePluginCommand },
+    { name: 'ctx.invokePluginCommand', fn: runtimeCtx?.invokePluginCommand },
+    { name: 'ctx.commands.execute', fn: runtimeCtx?.commands?.execute },
+    { name: 'ctx.commands.executeCommand', fn: runtimeCtx?.commands?.executeCommand },
+    { name: 'ctx.plugins.executeCommand', fn: runtimeCtx?.plugins?.executeCommand },
+    { name: 'ctx.plugins.execute', fn: runtimeCtx?.plugins?.execute },
+    { name: 'window.sharkord.executeCommand', fn: sharkordGlobal?.executeCommand },
+    { name: 'window.sharkord.executePluginCommand', fn: sharkordGlobal?.executePluginCommand },
+    { name: 'window.sharkord.commands.execute', fn: sharkordGlobal?.commands?.execute },
+    { name: 'window.sharkord.commands.executeCommand', fn: sharkordGlobal?.commands?.executeCommand },
+    { name: 'window.sharkord.plugins.executeCommand', fn: sharkordGlobal?.plugins?.executeCommand },
+    { name: 'window.sharkord.plugins.execute', fn: sharkordGlobal?.plugins?.execute }
   ];
 
-  for (const candidate of candidates) {
-    const executor = callCommand(candidate);
-    if (executor) {
-      return executor;
-    }
-  }
+  return async (commandName, args) => {
+    debugLog('command.execute.start', {
+      commandName,
+      candidateCount: candidates.length,
+      availableCandidates: candidates.filter((c) => typeof c.fn === 'function').map((c) => c.name)
+    });
 
-  return null;
+    let lastError: unknown = null;
+
+    for (const candidate of candidates) {
+      const executor = callCommand(candidate.fn);
+      if (!executor) continue;
+
+      try {
+        const result = await executor(commandName, args);
+        debugLog('command.execute.bridge.success', { commandName, candidate: candidate.name });
+        return result;
+      } catch (error) {
+        lastError = error;
+        debugLog('command.execute.bridge.failure', {
+          commandName,
+          candidate: candidate.name,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    const bridgeError = lastError instanceof Error ? lastError.message : String(lastError || 'none');
+
+    throw new Error(
+      `Soundboard command bridge is unavailable in this Sharkord build or does not expose a compatible execute API. Last bridge error: ${bridgeError}`
+    );
+  };
 };
 
 const fileToBase64 = (file: File) =>
@@ -122,10 +169,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
   const runCommand = useCallback(
     async (commandName: string, args?: Record<string, unknown>) => {
-      if (!executeCommand) {
-        throw new Error('Soundboard command bridge is unavailable in this Sharkord build.');
-      }
-
       return executeCommand(commandName, args);
     },
     [executeCommand]
