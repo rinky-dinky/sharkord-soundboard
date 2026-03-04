@@ -21,12 +21,59 @@ type TPluginCommandRouter = {
 
 let trpcExecutor: TExecuteCommand | null = null;
 
+const debugLog = (event: string, details?: Record<string, unknown>) => {
+  console.info('[soundboard][debug]', event, details || {});
+};
+
+const getAuthToken = (): string => {
+  const windows: Array<Window | null | undefined> = [window, window.parent, window.top];
+  const storageKeys = ['sharkord-token', 'sharkord-auto-login-token'];
+
+  debugLog('auth.token.lookup.start', { checkedWindows: windows.length });
+
+  for (const win of windows) {
+    if (!win) continue;
+
+    try {
+      for (const key of storageKeys) {
+        const fromSession = win.sessionStorage?.getItem(key);
+        if (fromSession) {
+          debugLog('auth.token.lookup.hit', { source: 'sessionStorage', key, length: fromSession.length });
+          return fromSession;
+        }
+
+        const fromLocal = win.localStorage?.getItem(key);
+        if (fromLocal) {
+          debugLog('auth.token.lookup.hit', { source: 'localStorage', key, length: fromLocal.length });
+          return fromLocal;
+        }
+      }
+
+      const globalToken = (win as any)?.sharkord?.token || (win as any)?.sharkord?.auth?.token;
+      if (typeof globalToken === 'string' && globalToken.length > 0) {
+        debugLog('auth.token.lookup.hit', { source: 'window.sharkord', length: globalToken.length });
+        return globalToken;
+      }
+    } catch (error) {
+      debugLog('auth.token.lookup.window-error', { error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+  }
+
+  debugLog('auth.token.lookup.miss');
+  return '';
+};
+
 const createTrpcExecutor = (): TExecuteCommand => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const token = sessionStorage.getItem('sharkord-token') || '';
+  debugLog('trpc.executor.create', { protocol, host: window.location.host });
   const wsClient = createWSClient({
     url: `${protocol}://${window.location.host}`,
-    connectionParams: async () => ({ token })
+    connectionParams: async () => {
+      const token = getAuthToken();
+      debugLog('trpc.connection.params', { hasToken: Boolean(token), tokenLength: token.length });
+      return { token };
+    }
   });
   const trpc = createTRPCProxyClient<any>({
     links: [wsLink({ client: wsClient })]
@@ -118,6 +165,7 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   const fallbackExecutor = trpcExecutor;
 
   return async (commandName, args) => {
+    debugLog('command.execute.start', { commandName, hasArgs: Boolean(args), bridgeCandidates: candidates.length });
     let lastError: unknown = null;
 
     for (const candidate of candidates) {
@@ -125,18 +173,42 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
       if (!executor) continue;
 
       try {
-        return await executor(commandName, args);
+        const result = await executor(commandName, args);
+        debugLog('command.execute.bridge.success', { commandName });
+        return result;
       } catch (error) {
         lastError = error;
+        debugLog('command.execute.bridge.failure', { commandName, error: error instanceof Error ? error.message : String(error) });
       }
     }
 
     try {
-      return await fallbackExecutor(commandName, args);
+      debugLog('command.execute.trpc.attempt', { commandName });
+      const result = await fallbackExecutor(commandName, args);
+      debugLog('command.execute.trpc.success', { commandName });
+      return result;
     } catch (error) {
-      const fallbackError = error instanceof Error ? error.message : String(error);
+      const fallbackMessage = error instanceof Error ? error.message : String(error);
+      if (fallbackMessage.includes('authenticated')) {
+        debugLog('command.execute.trpc.auth-retry', { commandName, error: fallbackMessage });
+        trpcExecutor = createTrpcExecutor();
+
+        try {
+          const retryResult = await trpcExecutor(commandName, args);
+          debugLog('command.execute.trpc.retry-success', { commandName });
+          return retryResult;
+        } catch (retryError) {
+          debugLog('command.execute.trpc.retry-failure', { commandName, error: retryError instanceof Error ? retryError.message : String(retryError) });
+          const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
+          debugLog('command.execute.trpc.failure', { commandName, error: fallbackMessage });
       const bridgeError = lastError instanceof Error ? lastError.message : String(lastError || 'none');
-      throw new Error(`Unable to invoke soundboard command. Bridge error: ${bridgeError}. TRPC fallback error: ${fallbackError}.`);
+          throw new Error(`Unable to invoke soundboard command. Bridge error: ${bridgeError}. TRPC fallback error: ${retryMessage}.`);
+        }
+      }
+
+      debugLog('command.execute.trpc.failure', { commandName, error: fallbackMessage });
+      const bridgeError = lastError instanceof Error ? lastError.message : String(lastError || 'none');
+      throw new Error(`Unable to invoke soundboard command. Bridge error: ${bridgeError}. TRPC fallback error: ${fallbackMessage}.`);
     }
   };
 };
