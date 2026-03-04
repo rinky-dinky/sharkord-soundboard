@@ -1,10 +1,44 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
+import { createTRPCProxyClient, createWSClient, wsLink } from '@trpc/client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const getPluginId = () => 'sharkord-soundboard';
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+type TPluginCommandRouter = {
+  plugins: {
+    executeCommand: {
+      mutate: (input: {
+        pluginId: string;
+        commandName: string;
+        args?: Record<string, unknown>;
+      }) => Promise<unknown>;
+    };
+  };
+};
+
+let trpcExecutor: TExecuteCommand | null = null;
+
+const createTrpcExecutor = (): TExecuteCommand => {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const token = sessionStorage.getItem('sharkord-token') || '';
+  const wsClient = createWSClient({
+    url: `${protocol}://${window.location.host}`,
+    connectionParams: async () => ({ token })
+  });
+  const trpc = createTRPCProxyClient<any>({
+    links: [wsLink({ client: wsClient })]
+  });
+
+  return (commandName, args) =>
+    (trpc as unknown as TPluginCommandRouter).plugins.executeCommand.mutate({
+      pluginId: getPluginId(),
+      commandName,
+      args
+    });
+};
 
 const unwrapCommandResponse = <T,>(response: unknown): T => {
   if (response && typeof response === 'object') {
@@ -85,7 +119,11 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => 
     }
   }
 
-  return null;
+  if (!trpcExecutor) {
+    trpcExecutor = createTrpcExecutor();
+  }
+
+  return trpcExecutor;
 };
 
 const fileToBase64 = (file: File) =>
