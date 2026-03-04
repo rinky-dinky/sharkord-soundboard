@@ -84,6 +84,7 @@ const stopPlaybackForUser = (ctx: PluginContext, userId: number) => {
 
 const onLoad = async (ctx: PluginContext) => {
   ctx.log('Soundboard plugin loaded');
+  ctx.log('Initializing soundboard plugin UI and command handlers');
   const ffmpegBinaryPath = await assertFfmpegBinary(ctx.path);
   ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
 
@@ -100,13 +101,16 @@ const onLoad = async (ctx: PluginContext) => {
   soundsCache.get = async () => parseSounds(await settings.get(SOUNDS_SETTINGS_KEY));
   soundsCache.set = async (sounds: TSoundEntry[]) => settings.set(SOUNDS_SETTINGS_KEY, JSON.stringify(sounds));
 
+  ctx.log('Enabling plugin UI components');
   ctx.ui.enable();
+  ctx.log('Plugin UI enabled');
 
   ctx.commands.register({
     name: 'list_sounds',
     description: 'Returns all shared soundboard sounds.',
     args: [],
     async executes() {
+      ctx.debug('Command list_sounds invoked');
       const sounds = await soundsCache.get!();
       const payload: TListSoundsResponse = { sounds };
       return payload;
@@ -123,6 +127,12 @@ const onLoad = async (ctx: PluginContext) => {
       { name: 'dataBase64', type: 'string', required: true }
     ],
     async executes(invokerCtx: TInvokerContext, args: { name: string; emoji: string; mimeType: string; dataBase64: string }) {
+      ctx.debug('Command upload_sound invoked', {
+        userId: invokerCtx.userId,
+        name: args.name,
+        emoji: args.emoji,
+        mimeType: args.mimeType
+      });
       const name = args.name.trim();
       const emoji = args.emoji.trim();
 
@@ -158,6 +168,11 @@ const onLoad = async (ctx: PluginContext) => {
     description: 'Play a sound in your current voice channel.',
     args: [{ name: 'soundId', type: 'string', required: true }],
     async executes(invokerCtx: TInvokerContext, args: { soundId: string }) {
+      ctx.debug('Command play_sound invoked', {
+        userId: invokerCtx.userId,
+        currentVoiceChannelId: invokerCtx.currentVoiceChannelId,
+        soundId: args.soundId
+      });
       if (!invokerCtx.currentVoiceChannelId) {
         throw new Error('Join a voice channel before using the soundboard.');
       }
@@ -238,8 +253,18 @@ const onLoad = async (ctx: PluginContext) => {
       };
 
       activePlaybackByUser.set(invokerCtx.userId, playback);
+      ctx.log('Started ffmpeg playback', {
+        userId: invokerCtx.userId,
+        channelId,
+        ffmpegPid: ffmpeg.pid
+      });
 
       ffmpeg.on('exit', async () => {
+        ctx.log('ffmpeg playback ended', {
+          userId: invokerCtx.userId,
+          channelId,
+          ffmpegPid: ffmpeg.pid
+        });
         stopPlaybackForUser(ctx, invokerCtx.userId);
         await rm(inputPath, { force: true });
       });
