@@ -8,29 +8,40 @@ type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => 
 
 const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => {
   const runtimeCtx = ctx as any;
+  const sharkordGlobal = (window as any)?.sharkord;
 
-  const directExecute = runtimeCtx?.executeCommand;
-  if (typeof directExecute === 'function') {
-    return (commandName, args) =>
-      directExecute({ pluginId: getPluginId(), commandName, args });
-  }
+  const callCommand = (candidate: unknown): TExecuteCommand | null => {
+    if (typeof candidate !== 'function') {
+      return null;
+    }
 
-  const pluginsExecute = runtimeCtx?.plugins?.executeCommand;
-  if (typeof pluginsExecute === 'function') {
     return (commandName, args) =>
-      pluginsExecute({ pluginId: getPluginId(), commandName, args });
-  }
+      Promise.resolve(
+        candidate({ pluginId: getPluginId(), commandName, args })
+      );
+  };
 
-  const commandsExecute = runtimeCtx?.commands?.execute;
-  if (typeof commandsExecute === 'function') {
-    return (commandName, args) =>
-      commandsExecute({ pluginId: getPluginId(), commandName, args });
-  }
+  const candidates = [
+    runtimeCtx?.executeCommand,
+    runtimeCtx?.executePluginCommand,
+    runtimeCtx?.invokePluginCommand,
+    runtimeCtx?.commands?.execute,
+    runtimeCtx?.commands?.executeCommand,
+    runtimeCtx?.plugins?.executeCommand,
+    runtimeCtx?.plugins?.execute,
+    sharkordGlobal?.executeCommand,
+    sharkordGlobal?.executePluginCommand,
+    sharkordGlobal?.commands?.execute,
+    sharkordGlobal?.commands?.executeCommand,
+    sharkordGlobal?.plugins?.executeCommand,
+    sharkordGlobal?.plugins?.execute
+  ];
 
-  const sharkordExecute = (window as any)?.sharkord?.plugins?.executeCommand;
-  if (typeof sharkordExecute === 'function') {
-    return (commandName, args) =>
-      sharkordExecute({ pluginId: getPluginId(), commandName, args });
+  for (const candidate of candidates) {
+    const executor = callCommand(candidate);
+    if (executor) {
+      return executor;
+    }
   }
 
   return null;

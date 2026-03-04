@@ -9,6 +9,7 @@ const SoundboardLauncher = (ctx: TPluginSlotContext) => {
   const [mounted, setMounted] = useState(false);
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({});
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -49,7 +50,11 @@ const SoundboardLauncher = (ctx: TPluginSlotContext) => {
     updatePanelPosition();
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const isLauncherClick = containerRef.current?.contains(target);
+      const isPanelClick = panelRef.current?.contains(target);
+
+      if (!isLauncherClick && !isPanelClick) {
         setOpen(false);
       }
     };
@@ -91,6 +96,7 @@ const SoundboardLauncher = (ctx: TPluginSlotContext) => {
       {mounted && open
         ? createPortal(
             <div
+              ref={panelRef}
               role="dialog"
               aria-label="Soundboard"
               style={panelStyle}
