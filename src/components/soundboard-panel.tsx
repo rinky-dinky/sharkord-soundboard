@@ -1,10 +1,34 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const getPluginId = () => 'sharkord-soundboard';
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+const unwrapCommandResponse = <T,>(response: unknown): T => {
+  if (response && typeof response === 'object') {
+    const envelope = response as Record<string, unknown>;
+
+    if (envelope.error) {
+      const errorMessage =
+        typeof envelope.error === 'string'
+          ? envelope.error
+          : (envelope.error as any)?.message;
+      throw new Error(errorMessage || 'Command failed.');
+    }
+
+    if ('result' in envelope) {
+      return envelope.result as T;
+    }
+
+    if ('data' in envelope) {
+      return envelope.data as T;
+    }
+  }
+
+  return response as T;
+};
 
 const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => {
   const runtimeCtx = ctx as any;
@@ -15,10 +39,27 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => 
       return null;
     }
 
-    return (commandName, args) =>
-      Promise.resolve(
-        candidate({ pluginId: getPluginId(), commandName, args })
-      );
+    return async (commandName, args) => {
+      const pluginId = getPluginId();
+      const attemptCalls: Array<() => unknown> = [
+        () => candidate({ pluginId, commandName, args }),
+        () => candidate(pluginId, commandName, args),
+        () => candidate(`${pluginId}:${commandName}`, args),
+        () => candidate(commandName, args)
+      ];
+
+      let lastError: unknown = null;
+      for (const attempt of attemptCalls) {
+        try {
+          const response = await Promise.resolve(attempt());
+          return unwrapCommandResponse(response);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError instanceof Error ? lastError : new Error('Unable to invoke soundboard command.');
+    };
   };
 
   const candidates = [
@@ -66,8 +107,7 @@ const fileToBase64 = (file: File) =>
 
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
-  const executeCommand = getCommandExecutor(ctx);
-  console.info('[soundboard] panel mounted', { currentVoiceChannelId });
+  const executeCommand = useMemo(() => getCommandExecutor(ctx), [ctx]);
 
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
@@ -75,6 +115,10 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    console.info('[soundboard] panel mounted', { currentVoiceChannelId });
+  }, [currentVoiceChannelId]);
 
   const runCommand = useCallback(
     async (commandName: string, args?: Record<string, unknown>) => {
@@ -89,8 +133,10 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
   const refresh = useCallback(async () => {
     console.info('[soundboard] refreshing sounds list');
-    const response = (await runCommand('list_sounds')) as { sounds: TSoundEntry[] };
-    setSounds(response.sounds || []);
+    const response = unwrapCommandResponse<{ sounds?: TSoundEntry[] }>(
+      await runCommand('list_sounds')
+    );
+    setSounds(Array.isArray(response?.sounds) ? response.sounds : []);
   }, [runCommand]);
 
   useEffect(() => {
