@@ -1,10 +1,91 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
+import { createTRPCProxyClient, createWSClient, wsLink } from '@trpc/client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const getPluginId = () => 'sharkord-soundboard';
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+type TPluginCommandRouter = {
+  plugins: {
+    executeCommand: {
+      mutate: (input: {
+        pluginId: string;
+        commandName: string;
+        args?: Record<string, unknown>;
+      }) => Promise<unknown>;
+    };
+  };
+};
+
+let trpcExecutor: TExecuteCommand | null = null;
+
+const debugLog = (event: string, details?: Record<string, unknown>) => {
+  console.info('[soundboard][debug]', event, details || {});
+};
+
+const getAuthToken = (): string => {
+  const windows: Array<Window | null | undefined> = [window, window.parent, window.top];
+  const storageKeys = ['sharkord-token', 'sharkord-auto-login-token'];
+
+  debugLog('auth.token.lookup.start', { checkedWindows: windows.length });
+
+  for (const win of windows) {
+    if (!win) continue;
+
+    try {
+      for (const key of storageKeys) {
+        const fromSession = win.sessionStorage?.getItem(key);
+        if (fromSession) {
+          debugLog('auth.token.lookup.hit', { source: 'sessionStorage', key, length: fromSession.length });
+          return fromSession;
+        }
+
+        const fromLocal = win.localStorage?.getItem(key);
+        if (fromLocal) {
+          debugLog('auth.token.lookup.hit', { source: 'localStorage', key, length: fromLocal.length });
+          return fromLocal;
+        }
+      }
+
+      const globalToken = (win as any)?.sharkord?.token || (win as any)?.sharkord?.auth?.token;
+      if (typeof globalToken === 'string' && globalToken.length > 0) {
+        debugLog('auth.token.lookup.hit', { source: 'window.sharkord', length: globalToken.length });
+        return globalToken;
+      }
+    } catch (error) {
+      debugLog('auth.token.lookup.window-error', { error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+  }
+
+  debugLog('auth.token.lookup.miss');
+  return '';
+};
+
+const createTrpcExecutor = (): TExecuteCommand => {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  debugLog('trpc.executor.create', { protocol, host: window.location.host });
+  const wsClient = createWSClient({
+    url: `${protocol}://${window.location.host}`,
+    connectionParams: async () => {
+      const token = getAuthToken();
+      debugLog('trpc.connection.params', { hasToken: Boolean(token), tokenLength: token.length });
+      return { token };
+    }
+  });
+  const trpc = createTRPCProxyClient<any>({
+    links: [wsLink({ client: wsClient })]
+  });
+
+  return (commandName, args) =>
+    (trpc as unknown as TPluginCommandRouter).plugins.executeCommand.mutate({
+      pluginId: getPluginId(),
+      commandName,
+      args
+    });
+};
 
 const unwrapCommandResponse = <T,>(response: unknown): T => {
   if (response && typeof response === 'object') {
@@ -30,7 +111,7 @@ const unwrapCommandResponse = <T,>(response: unknown): T => {
   return response as T;
 };
 
-const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => {
+const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sharkordGlobal = (window as any)?.sharkord;
 
@@ -78,14 +159,58 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => 
     sharkordGlobal?.plugins?.execute
   ];
 
-  for (const candidate of candidates) {
-    const executor = callCommand(candidate);
-    if (executor) {
-      return executor;
-    }
+  if (!trpcExecutor) {
+    trpcExecutor = createTrpcExecutor();
   }
+  const fallbackExecutor = trpcExecutor;
 
-  return null;
+  return async (commandName, args) => {
+    debugLog('command.execute.start', { commandName, hasArgs: Boolean(args), bridgeCandidates: candidates.length });
+    let lastError: unknown = null;
+
+    for (const candidate of candidates) {
+      const executor = callCommand(candidate);
+      if (!executor) continue;
+
+      try {
+        const result = await executor(commandName, args);
+        debugLog('command.execute.bridge.success', { commandName });
+        return result;
+      } catch (error) {
+        lastError = error;
+        debugLog('command.execute.bridge.failure', { commandName, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    try {
+      debugLog('command.execute.trpc.attempt', { commandName });
+      const result = await fallbackExecutor(commandName, args);
+      debugLog('command.execute.trpc.success', { commandName });
+      return result;
+    } catch (error) {
+      const fallbackMessage = error instanceof Error ? error.message : String(error);
+      if (fallbackMessage.includes('authenticated')) {
+        debugLog('command.execute.trpc.auth-retry', { commandName, error: fallbackMessage });
+        trpcExecutor = createTrpcExecutor();
+
+        try {
+          const retryResult = await trpcExecutor(commandName, args);
+          debugLog('command.execute.trpc.retry-success', { commandName });
+          return retryResult;
+        } catch (retryError) {
+          debugLog('command.execute.trpc.retry-failure', { commandName, error: retryError instanceof Error ? retryError.message : String(retryError) });
+          const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
+          debugLog('command.execute.trpc.failure', { commandName, error: fallbackMessage });
+      const bridgeError = lastError instanceof Error ? lastError.message : String(lastError || 'none');
+          throw new Error(`Unable to invoke soundboard command. Bridge error: ${bridgeError}. TRPC fallback error: ${retryMessage}.`);
+        }
+      }
+
+      debugLog('command.execute.trpc.failure', { commandName, error: fallbackMessage });
+      const bridgeError = lastError instanceof Error ? lastError.message : String(lastError || 'none');
+      throw new Error(`Unable to invoke soundboard command. Bridge error: ${bridgeError}. TRPC fallback error: ${fallbackMessage}.`);
+    }
+  };
 };
 
 const fileToBase64 = (file: File) =>
@@ -122,10 +247,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
   const runCommand = useCallback(
     async (commandName: string, args?: Record<string, unknown>) => {
-      if (!executeCommand) {
-        throw new Error('Soundboard command bridge is unavailable in this Sharkord build.');
-      }
-
       return executeCommand(commandName, args);
     },
     [executeCommand]
