@@ -67,3 +67,11 @@ declare module '@sharkord/ui' {
   export const Button: React.ComponentType<any>;
   export const Input: React.ComponentType<any>;
 }
+
+
+declare module 'react-dom' {
+  export function createPortal(
+    children: React.ReactNode,
+    container: Element | DocumentFragment
+  ): React.ReactPortal;
+}
