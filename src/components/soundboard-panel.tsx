@@ -1,28 +1,39 @@
-import { createWSClient, wsLink, createTRPCProxyClient } from '@trpc/client';
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const getPluginId = () => 'sharkord-soundboard';
 
-const usePluginTrpc = () => {
-  return useMemo(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const host = window.location.host;
+type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
-    const wsClient = createWSClient({
-      url: `${protocol}://${host}`,
-      connectionParams: async () => ({
-        token: sessionStorage.getItem('sharkord-token') || ''
-      })
-    });
+const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand | null => {
+  const runtimeCtx = ctx as any;
 
-    const trpc = createTRPCProxyClient<any>({
-      links: [wsLink({ client: wsClient })]
-    });
+  const directExecute = runtimeCtx?.executeCommand;
+  if (typeof directExecute === 'function') {
+    return (commandName, args) =>
+      directExecute({ pluginId: getPluginId(), commandName, args });
+  }
 
-    return { trpc, close: () => wsClient.close() };
-  }, []);
+  const pluginsExecute = runtimeCtx?.plugins?.executeCommand;
+  if (typeof pluginsExecute === 'function') {
+    return (commandName, args) =>
+      pluginsExecute({ pluginId: getPluginId(), commandName, args });
+  }
+
+  const commandsExecute = runtimeCtx?.commands?.execute;
+  if (typeof commandsExecute === 'function') {
+    return (commandName, args) =>
+      commandsExecute({ pluginId: getPluginId(), commandName, args });
+  }
+
+  const sharkordExecute = (window as any)?.sharkord?.plugins?.executeCommand;
+  if (typeof sharkordExecute === 'function') {
+    return (commandName, args) =>
+      sharkordExecute({ pluginId: getPluginId(), commandName, args });
+  }
+
+  return null;
 };
 
 const fileToBase64 = (file: File) =>
@@ -42,8 +53,9 @@ const fileToBase64 = (file: File) =>
     reader.readAsDataURL(file);
   });
 
-const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
-  const { trpc, close } = usePluginTrpc();
+const SoundboardPanel = (ctx: TPluginSlotContext) => {
+  const { currentVoiceChannelId } = ctx;
+  const executeCommand = getCommandExecutor(ctx);
   console.info('[soundboard] panel mounted', { currentVoiceChannelId });
 
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
@@ -55,13 +67,13 @@ const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
 
   const runCommand = useCallback(
     async (commandName: string, args?: Record<string, unknown>) => {
-      return (trpc as any).plugins.executeCommand.mutate({
-        pluginId: getPluginId(),
-        commandName,
-        args
-      });
+      if (!executeCommand) {
+        throw new Error('Soundboard command bridge is unavailable in this Sharkord build.');
+      }
+
+      return executeCommand(commandName, args);
     },
-    [trpc]
+    [executeCommand]
   );
 
   const refresh = useCallback(async () => {
@@ -72,10 +84,7 @@ const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
 
   useEffect(() => {
     refresh().catch((e) => setError(e instanceof Error ? e.message : String(e)));
-    return () => {
-      void close();
-    };
-  }, [refresh, close]);
+  }, [refresh]);
 
   const onUpload = useCallback(async () => {
     if (!file) {
@@ -120,7 +129,7 @@ const SoundboardPanel = ({ currentVoiceChannelId }: TPluginSlotContext) => {
         setLoading(false);
       }
     },
-    [runCommand]
+    [currentVoiceChannelId, runCommand]
   );
 
 
