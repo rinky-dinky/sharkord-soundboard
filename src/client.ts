@@ -1,8 +1,8 @@
 import { PluginSlot, type TPluginComponentsMapBySlotId } from '@sharkord/plugin-sdk';
-import { SoundboardPanel } from './components/soundboard-panel';
+import { SoundboardLauncher } from './components/soundboard-launcher';
 
 const components: TPluginComponentsMapBySlotId = {
-  [PluginSlot.HOME_SCREEN]: [SoundboardPanel]
+  [PluginSlot.TOPBAR_RIGHT]: [SoundboardLauncher]
 };
 
 export { components };
