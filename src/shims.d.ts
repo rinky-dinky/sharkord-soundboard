@@ -1,6 +1,7 @@
 declare module '@sharkord/plugin-sdk' {
   export enum PluginSlot {
-    HOME_SCREEN = 'home_screen'
+    HOME_SCREEN = 'home_screen',
+    TOPBAR_RIGHT = 'topbar_right'
   }
 
   export type TPluginSlotContext = {
