@@ -121,9 +121,10 @@ const onLoad = async (ctx: PluginContext) => {
     args: [
       { name: 'name', type: 'string', required: true },
       { name: 'emoji', type: 'string', required: true },
-      { name: 'url', type: 'string', required: true }
+      { name: 'url', type: 'string', required: true },
+      { name: 'id', type: 'string', required: false }
     ],
-    async executes(invokerCtx: TInvokerContext, args: { name: string; emoji: string; url: string }) {
+    async executes(invokerCtx: TInvokerContext, args: { name: string; emoji: string; url: string; id?: string }) {
       ctx.debug('Command upload_sound invoked', {
         userId: invokerCtx.userId,
         name: args.name,
@@ -159,8 +160,10 @@ const onLoad = async (ctx: PluginContext) => {
       }
 
       const sounds = await soundsCache.get!();
+      const soundId = args.id?.trim() || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
       const nextSound: TSoundEntry = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: soundId,
         name,
         emoji,
         mimeType,

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const getPluginId = () => 'sharkord-soundboard';
+const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -214,6 +215,23 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (bridgeAvailable) return;
+
+    try {
+      const raw = localStorage.getItem(LOCAL_SOUNDS_CACHE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as TSoundEntry[];
+      if (Array.isArray(parsed)) setSounds(parsed);
+    } catch {}
+  }, [bridgeAvailable]);
+
+  useEffect(() => {
+    if (bridgeAvailable) return;
+
+    localStorage.setItem(LOCAL_SOUNDS_CACHE_KEY, JSON.stringify(sounds));
+  }, [bridgeAvailable, sounds]);
+
+  useEffect(() => {
     console.info('[soundboard] panel mounted', { currentVoiceChannelId });
   }, [currentVoiceChannelId]);
 
@@ -236,7 +254,11 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       await runCommand('list_sounds')
     );
 
-    setSounds(Array.isArray(response?.sounds) ? response.sounds : []);
+    const nextSounds = Array.isArray(response?.sounds) ? response.sounds : [];
+    setSounds(nextSounds);
+    if (bridgeAvailable) {
+      localStorage.setItem(LOCAL_SOUNDS_CACHE_KEY, JSON.stringify(nextSounds));
+    }
   }, [bridgeAvailable, runCommand]);
 
   useEffect(() => {
@@ -256,19 +278,34 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
     try {
       console.info('[soundboard] uploading sound from URL', { name, emoji, sourceUrl });
+      const soundId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       await runCommand('upload_sound', {
         name,
         emoji,
-        url: sourceUrl.trim()
+        url: sourceUrl.trim(),
+        id: soundId
       });
+
+      if (!bridgeAvailable) {
+        const optimisticSound: TSoundEntry = {
+          id: soundId,
+          name: name.trim(),
+          emoji: emoji.trim(),
+          mimeType: 'audio/mpeg',
+          sourceUrl: sourceUrl.trim(),
+          createdByUserId: 0,
+          createdAt: Date.now()
+        };
+        setSounds((prev) => [optimisticSound, ...prev.filter((item) => item.id !== soundId)]);
+      }
 
       setSourceUrl('');
       setName('');
       if (bridgeAvailable) {
         await refresh();
       } else {
-        setError('Sent /upload_sound command to the selected channel. If bridge is unavailable, use Refresh after command completes.');
+        setError('Uploaded via chat fallback. Sound added to local panel list.');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
