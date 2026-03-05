@@ -1,9 +1,7 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { access } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import { type TListSoundsResponse, type TSoundEntry } from './types';
 
@@ -54,7 +52,7 @@ const parseSounds = (raw: unknown): TSoundEntry[] => {
       typeof entry.name === 'string' &&
       typeof entry.emoji === 'string' &&
       typeof entry.mimeType === 'string' &&
-      typeof entry.dataBase64 === 'string' &&
+      (typeof entry.sourceUrl === 'string' || typeof entry.dataBase64 === 'string') &&
       typeof entry.createdByUserId === 'number' &&
       typeof entry.createdAt === 'number'
     );
@@ -123,26 +121,41 @@ const onLoad = async (ctx: PluginContext) => {
     args: [
       { name: 'name', type: 'string', required: true },
       { name: 'emoji', type: 'string', required: true },
-      { name: 'mimeType', type: 'string', required: true },
-      { name: 'dataBase64', type: 'string', required: true }
+      { name: 'url', type: 'string', required: true }
     ],
-    async executes(invokerCtx: TInvokerContext, args: { name: string; emoji: string; mimeType: string; dataBase64: string }) {
+    async executes(invokerCtx: TInvokerContext, args: { name: string; emoji: string; url: string }) {
       ctx.debug('Command upload_sound invoked', {
         userId: invokerCtx.userId,
         name: args.name,
         emoji: args.emoji,
-        mimeType: args.mimeType
+        url: args.url
       });
       const name = args.name.trim();
       const emoji = args.emoji.trim();
+      const url = args.url.trim();
 
       if (!name) throw new Error('Sound name is required.');
       if (!emoji) throw new Error('An emoji is required.');
-      if (!args.dataBase64) throw new Error('Sound data is required.');
+      if (!url) throw new Error('A file URL is required.');
+      if (!/^https?:\/\//i.test(url)) throw new Error('URL must start with http:// or https://');
 
-      const estimatedBytes = Buffer.byteLength(args.dataBase64, 'base64');
-      if (estimatedBytes > MAX_FILE_SIZE_BYTES) {
-        throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
+      let mimeType = 'audio/mpeg';
+
+      try {
+        const headResponse = await fetch(url, { method: 'HEAD' });
+        if (headResponse.ok) {
+          const contentLength = headResponse.headers.get('content-length');
+          if (contentLength && Number(contentLength) > MAX_FILE_SIZE_BYTES) {
+            throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
+          }
+
+          const rawContentType = headResponse.headers.get('content-type');
+          if (rawContentType) {
+            mimeType = rawContentType.split(';')[0]?.trim() || mimeType;
+          }
+        }
+      } catch (error) {
+        ctx.debug('Could not validate sound URL via HEAD request, continuing with URL reference', error);
       }
 
       const sounds = await soundsCache.get!();
@@ -150,8 +163,8 @@ const onLoad = async (ctx: PluginContext) => {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name,
         emoji,
-        mimeType: args.mimeType,
-        dataBase64: args.dataBase64,
+        mimeType,
+        sourceUrl: url,
         createdByUserId: invokerCtx.userId,
         createdAt: Date.now()
       };
@@ -224,15 +237,15 @@ const onLoad = async (ctx: PluginContext) => {
         producers: { audio: producer }
       });
 
-      const tmpDir = join(tmpdir(), 'sharkord-soundboard');
-      await mkdir(tmpDir, { recursive: true });
-      const inputPath = join(tmpDir, `sound-${invokerCtx.userId}-${Date.now()}.bin`);
-      await writeFile(inputPath, Buffer.from(sound.dataBase64, 'base64'));
+      const inputSource = sound.sourceUrl || (sound.dataBase64 ? `data:${sound.mimeType};base64,${sound.dataBase64}` : null);
+      if (!inputSource) {
+        throw new Error('Sound has no playable source.');
+      }
 
       const ffmpeg = spawn(ffmpegBinaryPath, [
         '-re',
         '-i',
-        inputPath,
+        inputSource,
         '-vn',
         '-ac',
         '2',
@@ -266,7 +279,6 @@ const onLoad = async (ctx: PluginContext) => {
           ffmpegPid: ffmpeg.pid
         });
         stopPlaybackForUser(ctx, invokerCtx.userId);
-        await rm(inputPath, { force: true });
       });
 
       return { ok: true };

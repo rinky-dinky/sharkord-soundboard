@@ -179,31 +179,37 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   };
 };
 
-const fileToBase64 = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== 'string') {
-        reject(new Error('Invalid file read.'));
-        return;
-      }
-
-      const comma = result.indexOf(',');
-      resolve(comma > -1 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error || new Error('Could not read file.'));
-    reader.readAsDataURL(file);
-  });
 
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
   const executeCommand = useMemo(() => getCommandExecutor(ctx), [ctx]);
+  const bridgeAvailable = useMemo(() => {
+    const runtimeCtx = ctx as any;
+    const sharkordGlobal = (window as any)?.sharkord;
+
+    const candidates = [
+      runtimeCtx?.executeCommand,
+      runtimeCtx?.executePluginCommand,
+      runtimeCtx?.invokePluginCommand,
+      runtimeCtx?.commands?.execute,
+      runtimeCtx?.commands?.executeCommand,
+      runtimeCtx?.plugins?.executeCommand,
+      runtimeCtx?.plugins?.execute,
+      sharkordGlobal?.executeCommand,
+      sharkordGlobal?.executePluginCommand,
+      sharkordGlobal?.commands?.execute,
+      sharkordGlobal?.commands?.executeCommand,
+      sharkordGlobal?.plugins?.executeCommand,
+      sharkordGlobal?.plugins?.execute
+    ];
+
+    return candidates.some((candidate) => typeof candidate === 'function');
+  }, [ctx]);
 
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
-  const [file, setFile] = useState<File | null>(null);
+  const [sourceUrl, setSourceUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -220,29 +226,28 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
   const refresh = useCallback(async () => {
     console.info('[soundboard] refreshing sounds list');
+
+    if (!bridgeAvailable) {
+      setError('Refresh requires command bridge support in this Sharkord build.');
+      return;
+    }
+
     const response = unwrapCommandResponse<{ sounds?: TSoundEntry[] }>(
       await runCommand('list_sounds')
     );
-    if (Array.isArray(response?.sounds) && response.sounds.length > 0) {
-      setSounds(response.sounds);
-      return;
-    }
-
-    if (Array.isArray(response?.sounds) && response.sounds.length === 0 && sounds.length > 0) {
-      setError('Sent /list_sounds via chat fallback. If bridge is unavailable, list responses are not returned directly to the panel.');
-      return;
-    }
 
     setSounds(Array.isArray(response?.sounds) ? response.sounds : []);
-  }, [runCommand, sounds.length]);
+  }, [bridgeAvailable, runCommand]);
 
   useEffect(() => {
+    if (!bridgeAvailable) return;
+
     refresh().catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [refresh]);
+  }, [bridgeAvailable, refresh]);
 
   const onUpload = useCallback(async () => {
-    if (!file) {
-      setError('Choose a file first.');
+    if (!sourceUrl.trim()) {
+      setError('Paste a file URL first.');
       return;
     }
 
@@ -250,25 +255,27 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     setError(null);
 
     try {
-      console.info('[soundboard] uploading sound', { name, emoji, mimeType: file.type });
-      const dataBase64 = await fileToBase64(file);
+      console.info('[soundboard] uploading sound from URL', { name, emoji, sourceUrl });
 
       await runCommand('upload_sound', {
         name,
         emoji,
-        mimeType: file.type || 'audio/mpeg',
-        dataBase64
+        url: sourceUrl.trim()
       });
 
-      setFile(null);
+      setSourceUrl('');
       setName('');
-      await refresh();
+      if (bridgeAvailable) {
+        await refresh();
+      } else {
+        setError('Sent /upload_sound command to the selected channel. If bridge is unavailable, use Refresh after command completes.');
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [emoji, file, name, refresh, runCommand]);
+  }, [bridgeAvailable, emoji, name, refresh, runCommand, sourceUrl]);
 
   const onPlay = useCallback(
     async (soundId: string) => {
@@ -314,7 +321,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
         <button
           type="button"
           className="rounded border px-2 py-1 disabled:opacity-50"
-          disabled={loading}
+          disabled={loading || !bridgeAvailable}
           onClick={() => refresh().catch((e) => setError(e instanceof Error ? e.message : String(e)))}
         >
           Refresh
@@ -337,13 +344,14 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
           className="rounded border bg-transparent px-2 py-1"
         />
         <input
-          type="file"
-          accept="audio/*"
-          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          value={sourceUrl}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSourceUrl(e.target.value)}
+          placeholder="Direct file URL (https://...)"
+          className="rounded border bg-transparent px-2 py-1"
         />
         <button
           type="button"
-          disabled={!file || !name || !emoji || loading}
+          disabled={!sourceUrl || !name || !emoji || loading}
           onClick={onUpload}
           className="rounded border px-2 py-1 disabled:opacity-50"
         >
@@ -351,6 +359,16 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
         </button>
       </div>
 
+      <p className="text-xs opacity-70">
+        Command format: <code>/upload_sound "Sound Name" "🦈" "https://example.com/sound.mp3"</code>
+      </p>
+
+
+      {!bridgeAvailable ? (
+        <p className="text-sm text-yellow-500">
+          Bridge is unavailable in this Sharkord build. Refresh will not return direct data, but Upload/Play can be sent as chat commands.
+        </p>
+      ) : null}
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
     </div>
