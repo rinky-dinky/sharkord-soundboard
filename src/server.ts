@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { access } from 'node:fs/promises';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import { type TListSoundsResponse, type TSoundEntry } from './types';
 
@@ -240,8 +241,26 @@ const onLoad = async (ctx: PluginContext) => {
         producers: { audio: producer }
       });
 
-      const inputSource = sound.sourceUrl || (sound.dataBase64 ? `data:${sound.mimeType};base64,${sound.dataBase64}` : null);
-      if (!inputSource) {
+      const tmpDir = join(tmpdir(), 'sharkord-soundboard');
+      await mkdir(tmpDir, { recursive: true });
+      const fileExt = sound.mimeType.includes('ogg') ? 'ogg' : sound.mimeType.includes('wav') ? 'wav' : 'mp3';
+      const inputPath = join(tmpDir, `sound-${invokerCtx.userId}-${Date.now()}.${fileExt}`);
+
+      if (sound.sourceUrl) {
+        const response = await fetch(sound.sourceUrl);
+        if (!response.ok) {
+          throw new Error(`Could not fetch sound URL for playback (HTTP ${response.status}).`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
+          throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
+        }
+
+        await writeFile(inputPath, Buffer.from(arrayBuffer));
+      } else if (sound.dataBase64) {
+        await writeFile(inputPath, Buffer.from(sound.dataBase64, 'base64'));
+      } else {
         throw new Error('Sound has no playable source.');
       }
 
@@ -258,7 +277,7 @@ const onLoad = async (ctx: PluginContext) => {
         'libopus',
         '-f',
         'rtp',
-        `rtp://127.0.0.1:${transport.tuple.localPort}?pkt_size=1200`
+        `rtp://${ip}:${transport.tuple.localPort}?pkt_size=1200`
       ]);
 
       const playback: TRuntimePlayback = {
@@ -273,6 +292,10 @@ const onLoad = async (ctx: PluginContext) => {
         userId: invokerCtx.userId,
         channelId,
         ffmpegPid: ffmpeg.pid
+      });
+
+      ffmpeg.stderr.on('data', (chunk) => {
+        ctx.debug('ffmpeg stderr', String(chunk));
       });
 
       ffmpeg.on('exit', async () => {

@@ -56,118 +56,20 @@ const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) 
 
 const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   const runtimeCtx = ctx as any;
-  const sharkordGlobal = (window as any)?.sharkord;
   const sendMessage = runtimeCtx?.sendMessage as ((channelId: number, content: string) => void) | undefined;
 
-  const callCommand = (candidate: unknown): TExecuteCommand | null => {
-    if (typeof candidate !== 'function') {
-      return null;
-    }
-
-    return async (commandName, args) => {
-      const pluginId = getPluginId();
-      const attemptCalls: Array<{ label: string; call: () => unknown }> = [
-        {
-          label: 'object:{pluginId,commandName,args}',
-          call: () => candidate({ pluginId, commandName, args })
-        },
-        {
-          label: 'args:(pluginId,commandName,args)',
-          call: () => candidate(pluginId, commandName, args)
-        },
-        {
-          label: 'args:(pluginId:commandName,args)',
-          call: () => candidate(`${pluginId}:${commandName}`, args)
-        },
-        {
-          label: 'args:(commandName,args)',
-          call: () => candidate(commandName, args)
-        }
-      ];
-
-      let lastError: unknown = null;
-      for (const attempt of attemptCalls) {
-        try {
-          const response = await Promise.resolve(attempt.call());
-          debugLog('command.execute.bridge.call-success', { commandName, signature: attempt.label });
-          return unwrapCommandResponse(response);
-        } catch (error) {
-          lastError = error;
-          debugLog('command.execute.bridge.call-failure', {
-            commandName,
-            signature: attempt.label,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
-
-      throw lastError instanceof Error ? lastError : new Error('Unable to invoke soundboard command.');
-    };
-  };
-
-  const candidates = [
-    { name: 'ctx.executeCommand', fn: runtimeCtx?.executeCommand },
-    { name: 'ctx.executePluginCommand', fn: runtimeCtx?.executePluginCommand },
-    { name: 'ctx.invokePluginCommand', fn: runtimeCtx?.invokePluginCommand },
-    { name: 'ctx.commands.execute', fn: runtimeCtx?.commands?.execute },
-    { name: 'ctx.commands.executeCommand', fn: runtimeCtx?.commands?.executeCommand },
-    { name: 'ctx.plugins.executeCommand', fn: runtimeCtx?.plugins?.executeCommand },
-    { name: 'ctx.plugins.execute', fn: runtimeCtx?.plugins?.execute },
-    { name: 'window.sharkord.executeCommand', fn: sharkordGlobal?.executeCommand },
-    { name: 'window.sharkord.executePluginCommand', fn: sharkordGlobal?.executePluginCommand },
-    { name: 'window.sharkord.commands.execute', fn: sharkordGlobal?.commands?.execute },
-    { name: 'window.sharkord.commands.executeCommand', fn: sharkordGlobal?.commands?.executeCommand },
-    { name: 'window.sharkord.plugins.executeCommand', fn: sharkordGlobal?.plugins?.executeCommand },
-    { name: 'window.sharkord.plugins.execute', fn: sharkordGlobal?.plugins?.execute }
-  ];
-
-
-  const availableCandidates = candidates.filter((c) => typeof c.fn === 'function');
-
   return async (commandName, args) => {
-    debugLog('command.execute.start', {
-      commandName,
-      candidateCount: candidates.length,
-      availableCandidates: availableCandidates.map((c) => c.name),
-      ctxKeys: Object.keys(runtimeCtx || {}),
-      sharkordKeys: Object.keys(sharkordGlobal || {})
-    });
-
-    let lastError: unknown = null;
-
-    for (const candidate of candidates) {
-      const executor = callCommand(candidate.fn);
-      if (!executor) continue;
-
-      try {
-        const result = await executor(commandName, args);
-        debugLog('command.execute.bridge.success', { commandName, candidate: candidate.name });
-        return result;
-      } catch (error) {
-        lastError = error;
-        debugLog('command.execute.bridge.failure', {
-          commandName,
-          candidate: candidate.name,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-    const bridgeError = lastError instanceof Error ? lastError.message : String(lastError || 'none');
-
     const selectedChannelId = runtimeCtx?.selectedChannelId as number | undefined;
 
     if (!sendMessage || !selectedChannelId) {
-      throw new Error(
-        `No command bridge found. Also cannot fallback to sendMessage because no text channel is selected. Last bridge error: ${bridgeError}`
-      );
+      throw new Error('No text channel selected. Select a channel to send soundboard commands.');
     }
 
     const commandText = buildSlashCommand(commandName, args);
-    debugLog('command.execute.sendMessage.fallback', {
+    debugLog('command.execute.sendMessage', {
       commandName,
       selectedChannelId,
-      commandLength: commandText.length,
-      bridgeError
+      commandLength: commandText.length
     });
 
     await Promise.resolve(sendMessage(selectedChannelId, commandText));
@@ -215,21 +117,17 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (bridgeAvailable) return;
-
     try {
       const raw = localStorage.getItem(LOCAL_SOUNDS_CACHE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as TSoundEntry[];
       if (Array.isArray(parsed)) setSounds(parsed);
     } catch {}
-  }, [bridgeAvailable]);
+  }, []);
 
   useEffect(() => {
-    if (bridgeAvailable) return;
-
     localStorage.setItem(LOCAL_SOUNDS_CACHE_KEY, JSON.stringify(sounds));
-  }, [bridgeAvailable, sounds]);
+  }, [sounds]);
 
   useEffect(() => {
     console.info('[soundboard] panel mounted', { currentVoiceChannelId });
@@ -245,27 +143,19 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const refresh = useCallback(async () => {
     console.info('[soundboard] refreshing sounds list');
 
-    if (!bridgeAvailable) {
-      setError('Refresh requires command bridge support in this Sharkord build.');
-      return;
+    setLoading(true);
+    setError(null);
+    try {
+      await runCommand('list_sounds');
+      setError('Sent /list_sounds to the selected channel. Panel list uses local cache in command-only mode.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
     }
+  }, [runCommand]);
 
-    const response = unwrapCommandResponse<{ sounds?: TSoundEntry[] }>(
-      await runCommand('list_sounds')
-    );
 
-    const nextSounds = Array.isArray(response?.sounds) ? response.sounds : [];
-    setSounds(nextSounds);
-    if (bridgeAvailable) {
-      localStorage.setItem(LOCAL_SOUNDS_CACHE_KEY, JSON.stringify(nextSounds));
-    }
-  }, [bridgeAvailable, runCommand]);
-
-  useEffect(() => {
-    if (!bridgeAvailable) return;
-
-    refresh().catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [bridgeAvailable, refresh]);
 
   const onUpload = useCallback(async () => {
     if (!sourceUrl.trim()) {
@@ -287,32 +177,26 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
         id: soundId
       });
 
-      if (!bridgeAvailable) {
-        const optimisticSound: TSoundEntry = {
-          id: soundId,
-          name: name.trim(),
-          emoji: emoji.trim(),
-          mimeType: 'audio/mpeg',
-          sourceUrl: sourceUrl.trim(),
-          createdByUserId: 0,
-          createdAt: Date.now()
-        };
-        setSounds((prev) => [optimisticSound, ...prev.filter((item) => item.id !== soundId)]);
-      }
+      const optimisticSound: TSoundEntry = {
+        id: soundId,
+        name: name.trim(),
+        emoji: emoji.trim(),
+        mimeType: 'audio/mpeg',
+        sourceUrl: sourceUrl.trim(),
+        createdByUserId: 0,
+        createdAt: Date.now()
+      };
+      setSounds((prev) => [optimisticSound, ...prev.filter((item) => item.id !== soundId)]);
 
       setSourceUrl('');
       setName('');
-      if (bridgeAvailable) {
-        await refresh();
-      } else {
-        setError('Uploaded via chat fallback. Sound added to local panel list.');
-      }
+      setError('Uploaded via command. Sound added to local panel list.');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [bridgeAvailable, emoji, name, refresh, runCommand, sourceUrl]);
+  }, [emoji, name, runCommand, sourceUrl]);
 
   const onPlay = useCallback(
     async (soundId: string) => {
@@ -358,8 +242,8 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
         <button
           type="button"
           className="rounded border px-2 py-1 disabled:opacity-50"
-          disabled={loading || !bridgeAvailable}
-          onClick={() => refresh().catch((e) => setError(e instanceof Error ? e.message : String(e)))}
+          disabled={loading}
+          onClick={refresh}
         >
           Refresh
         </button>
@@ -401,11 +285,9 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       </p>
 
 
-      {!bridgeAvailable ? (
-        <p className="text-sm text-yellow-500">
-          Bridge is unavailable in this Sharkord build. Refresh will not return direct data, but Upload/Play can be sent as chat commands.
-        </p>
-      ) : null}
+      <p className="text-sm text-yellow-500">
+        Command-only mode: actions are sent to the selected text channel. Upload/Play work; Refresh only triggers /list_sounds in chat.
+      </p>
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
     </div>
