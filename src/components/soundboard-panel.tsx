@@ -35,6 +35,8 @@ const unwrapCommandResponse = <T,>(response: unknown): T => {
   return response as T;
 };
 
+
+
 const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sharkordGlobal = (window as any)?.sharkord;
@@ -101,11 +103,14 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
     { name: 'window.sharkord.plugins.execute', fn: sharkordGlobal?.plugins?.execute }
   ];
 
+
   return async (commandName, args) => {
     debugLog('command.execute.start', {
       commandName,
       candidateCount: candidates.length,
-      availableCandidates: candidates.filter((c) => typeof c.fn === 'function').map((c) => c.name)
+      availableCandidates: candidates.filter((c) => typeof c.fn === 'function').map((c) => c.name),
+      ctxKeys: Object.keys(runtimeCtx || {}),
+      sharkordKeys: Object.keys(sharkordGlobal || {})
     });
 
     let lastError: unknown = null;
@@ -127,11 +132,10 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
         });
       }
     }
-
     const bridgeError = lastError instanceof Error ? lastError.message : String(lastError || 'none');
 
     throw new Error(
-      `Soundboard command bridge is unavailable in this Sharkord build or does not expose a compatible execute API. Last bridge error: ${bridgeError}`
+      `Soundboard command bridge is unavailable. No compatible execute API was found on slot context/window. Last bridge error: ${bridgeError}. This Sharkord SDK context appears to expose UI-only APIs (like sendMessage) but not direct plugin command invocation.`
     );
   };
 };
