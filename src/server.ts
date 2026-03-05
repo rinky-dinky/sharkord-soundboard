@@ -267,7 +267,7 @@ const onLoad = async (ctx: PluginContext) => {
       const ffmpeg = spawn(ffmpegBinaryPath, [
         '-re',
         '-i',
-        inputPath,
+        inputSource,
         '-vn',
         '-ac',
         '2',
@@ -305,7 +305,6 @@ const onLoad = async (ctx: PluginContext) => {
           ffmpegPid: ffmpeg.pid
         });
         stopPlaybackForUser(ctx, invokerCtx.userId);
-        await rm(inputPath, { force: true });
       });
 
       return { ok: true };
