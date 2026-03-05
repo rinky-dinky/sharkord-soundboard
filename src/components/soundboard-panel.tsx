@@ -1,4 +1,5 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
+import { createTRPCProxyClient, createWSClient, wsLink } from '@trpc/client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
