@@ -37,9 +37,26 @@ const unwrapCommandResponse = <T,>(response: unknown): T => {
 
 
 
+
+const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) => {
+  if (!args || Object.keys(args).length === 0) {
+    return `/${commandName}`;
+  }
+
+  const orderedArgValues = Object.values(args).map((value) => {
+    if (value === null || value === undefined) return '""';
+    return escapeArg(String(value));
+  });
+
+  return `/${commandName} ${orderedArgValues.join(' ')}`;
+};
+
 const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sharkordGlobal = (window as any)?.sharkord;
+  const sendMessage = runtimeCtx?.sendMessage as ((channelId: number, content: string) => void) | undefined;
 
   const callCommand = (candidate: unknown): TExecuteCommand | null => {
     if (typeof candidate !== 'function') {
@@ -104,11 +121,13 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   ];
 
 
+  const availableCandidates = candidates.filter((c) => typeof c.fn === 'function');
+
   return async (commandName, args) => {
     debugLog('command.execute.start', {
       commandName,
       candidateCount: candidates.length,
-      availableCandidates: candidates.filter((c) => typeof c.fn === 'function').map((c) => c.name),
+      availableCandidates: availableCandidates.map((c) => c.name),
       ctxKeys: Object.keys(runtimeCtx || {}),
       sharkordKeys: Object.keys(sharkordGlobal || {})
     });
@@ -134,9 +153,29 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
     }
     const bridgeError = lastError instanceof Error ? lastError.message : String(lastError || 'none');
 
-    throw new Error(
-      `Soundboard command bridge is unavailable. No compatible execute API was found on slot context/window. Last bridge error: ${bridgeError}. This Sharkord SDK context appears to expose UI-only APIs (like sendMessage) but not direct plugin command invocation.`
-    );
+    const selectedChannelId = runtimeCtx?.selectedChannelId as number | undefined;
+
+    if (!sendMessage || !selectedChannelId) {
+      throw new Error(
+        `No command bridge found. Also cannot fallback to sendMessage because no text channel is selected. Last bridge error: ${bridgeError}`
+      );
+    }
+
+    const commandText = buildSlashCommand(commandName, args);
+    debugLog('command.execute.sendMessage.fallback', {
+      commandName,
+      selectedChannelId,
+      commandLength: commandText.length,
+      bridgeError
+    });
+
+    await Promise.resolve(sendMessage(selectedChannelId, commandText));
+
+    if (commandName === 'list_sounds') {
+      return { sounds: [] };
+    }
+
+    return { queued: true };
   };
 };
 
@@ -184,8 +223,18 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     const response = unwrapCommandResponse<{ sounds?: TSoundEntry[] }>(
       await runCommand('list_sounds')
     );
+    if (Array.isArray(response?.sounds) && response.sounds.length > 0) {
+      setSounds(response.sounds);
+      return;
+    }
+
+    if (Array.isArray(response?.sounds) && response.sounds.length === 0 && sounds.length > 0) {
+      setError('Sent /list_sounds via chat fallback. If bridge is unavailable, list responses are not returned directly to the panel.');
+      return;
+    }
+
     setSounds(Array.isArray(response?.sounds) ? response.sounds : []);
-  }, [runCommand]);
+  }, [runCommand, sounds.length]);
 
   useEffect(() => {
     refresh().catch((e) => setError(e instanceof Error ? e.message : String(e)));
@@ -262,7 +311,12 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       </div>
 
       <div className="flex gap-2">
-        <button type="button" className="rounded border px-2 py-1" onClick={() => refresh()}>
+        <button
+          type="button"
+          className="rounded border px-2 py-1 disabled:opacity-50"
+          disabled={loading}
+          onClick={() => refresh().catch((e) => setError(e instanceof Error ? e.message : String(e)))}
+        >
           Refresh
         </button>
       </div>
@@ -296,6 +350,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
           Upload to Shared Soundboard
         </button>
       </div>
+
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
     </div>
