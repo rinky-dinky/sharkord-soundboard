@@ -264,6 +264,8 @@ const onLoad = async (ctx: PluginContext) => {
         throw new Error('Sound has no playable source.');
       }
 
+      const inputSource = inputPath;
+
       const ffmpeg = spawn(ffmpegBinaryPath, [
         '-re',
         '-i',
