@@ -307,7 +307,6 @@ const onLoad = async (ctx: PluginContext) => {
           ffmpegPid: ffmpeg.pid
         });
         stopPlaybackForUser(ctx, invokerCtx.userId);
-        await rm(inputPath, { force: true });
       });
 
       return { ok: true };
