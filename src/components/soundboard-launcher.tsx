@@ -86,7 +86,7 @@ const SoundboardLauncher = (ctx: TPluginSlotContext) => {
         type="button"
         onClick={() => setOpen((v) => !v)}
         title="Open Soundboard"
-        className="flex h-8 w-8 items-center justify-center rounded p-0 text-sm leading-none hover:bg-accent"
+        className="flex h-8 w-8 items-center justify-center rounded p-0 text-sm leading-none text-foreground/70 hover:bg-accent hover:text-foreground"
         aria-expanded={open}
         aria-haspopup="dialog"
       >
