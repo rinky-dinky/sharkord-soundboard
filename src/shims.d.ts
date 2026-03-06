@@ -7,7 +7,10 @@ declare module '@sharkord/plugin-sdk' {
   }
 
   export type TPluginSlotContext = {
+    users?: unknown[];
+    selectedChannelId?: number;
     currentVoiceChannelId?: number;
+    sendMessage?: (channelId: number, content: string) => void;
   };
 
   export type TPluginComponentsMapBySlotId = Record<string, React.ComponentType<any>[]>;
