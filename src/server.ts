@@ -1,14 +1,14 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { access } from 'node:fs/promises';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import { type TListSoundsResponse, type TSoundEntry } from './types';
 
 const SOUNDS_SETTINGS_KEY = 'soundsJson';
 const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 2;
+const RTP_AUDIO_PAYLOAD_TYPE = 111;
 
 const getFfmpegBinaryPath = (pluginPath: string) => {
   const binaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
@@ -54,7 +54,7 @@ const parseSounds = (raw: unknown): TSoundEntry[] => {
       typeof entry.name === 'string' &&
       typeof entry.emoji === 'string' &&
       typeof entry.mimeType === 'string' &&
-      typeof entry.dataBase64 === 'string' &&
+      (typeof entry.sourceUrl === 'string' || typeof entry.dataBase64 === 'string') &&
       typeof entry.createdByUserId === 'number' &&
       typeof entry.createdAt === 'number'
     );
@@ -123,35 +123,53 @@ const onLoad = async (ctx: PluginContext) => {
     args: [
       { name: 'name', type: 'string', required: true },
       { name: 'emoji', type: 'string', required: true },
-      { name: 'mimeType', type: 'string', required: true },
-      { name: 'dataBase64', type: 'string', required: true }
+      { name: 'url', type: 'string', required: true },
+      { name: 'id', type: 'string', required: false }
     ],
-    async executes(invokerCtx: TInvokerContext, args: { name: string; emoji: string; mimeType: string; dataBase64: string }) {
+    async executes(invokerCtx: TInvokerContext, args: { name: string; emoji: string; url: string; id?: string }) {
       ctx.debug('Command upload_sound invoked', {
         userId: invokerCtx.userId,
         name: args.name,
         emoji: args.emoji,
-        mimeType: args.mimeType
+        url: args.url
       });
       const name = args.name.trim();
       const emoji = args.emoji.trim();
+      const url = args.url.trim();
 
       if (!name) throw new Error('Sound name is required.');
       if (!emoji) throw new Error('An emoji is required.');
-      if (!args.dataBase64) throw new Error('Sound data is required.');
+      if (!url) throw new Error('A file URL is required.');
+      if (!/^https?:\/\//i.test(url)) throw new Error('URL must start with http:// or https://');
 
-      const estimatedBytes = Buffer.byteLength(args.dataBase64, 'base64');
-      if (estimatedBytes > MAX_FILE_SIZE_BYTES) {
-        throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
+      let mimeType = 'audio/mpeg';
+
+      try {
+        const headResponse = await fetch(url, { method: 'HEAD' });
+        if (headResponse.ok) {
+          const contentLength = headResponse.headers.get('content-length');
+          if (contentLength && Number(contentLength) > MAX_FILE_SIZE_BYTES) {
+            throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
+          }
+
+          const rawContentType = headResponse.headers.get('content-type');
+          if (rawContentType) {
+            mimeType = rawContentType.split(';')[0]?.trim() || mimeType;
+          }
+        }
+      } catch (error) {
+        ctx.debug('Could not validate sound URL via HEAD request, continuing with URL reference', error);
       }
 
       const sounds = await soundsCache.get!();
+      const soundId = args.id?.trim() || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
       const nextSound: TSoundEntry = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: soundId,
         name,
         emoji,
-        mimeType: args.mimeType,
-        dataBase64: args.dataBase64,
+        mimeType,
+        sourceUrl: url,
         createdByUserId: invokerCtx.userId,
         createdAt: Date.now()
       };
@@ -197,13 +215,15 @@ const onLoad = async (ctx: PluginContext) => {
         enableSrtp: false
       });
 
+      const audioSsrc = Math.floor(Math.random() * 1_000_000_000);
+
       const producer = await transport.produce({
         kind: 'audio',
         rtpParameters: {
           codecs: [
             {
               mimeType: 'audio/opus',
-              payloadType: 111,
+              payloadType: RTP_AUDIO_PAYLOAD_TYPE,
               clockRate: 48000,
               channels: 2,
               parameters: {
@@ -213,7 +233,7 @@ const onLoad = async (ctx: PluginContext) => {
               rtcpFeedback: []
             }
           ],
-          encodings: [{ ssrc: 22222222 }]
+          encodings: [{ ssrc: audioSsrc }]
         }
       });
 
@@ -226,13 +246,33 @@ const onLoad = async (ctx: PluginContext) => {
 
       const tmpDir = join(tmpdir(), 'sharkord-soundboard');
       await mkdir(tmpDir, { recursive: true });
-      const inputPath = join(tmpDir, `sound-${invokerCtx.userId}-${Date.now()}.bin`);
-      await writeFile(inputPath, Buffer.from(sound.dataBase64, 'base64'));
+      const fileExt = sound.mimeType.includes('ogg') ? 'ogg' : sound.mimeType.includes('wav') ? 'wav' : 'mp3';
+      const inputPath = join(tmpDir, `sound-${invokerCtx.userId}-${Date.now()}.${fileExt}`);
+
+      if (sound.sourceUrl) {
+        const response = await fetch(sound.sourceUrl);
+        if (!response.ok) {
+          throw new Error(`Could not fetch sound URL for playback (HTTP ${response.status}).`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
+          throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
+        }
+
+        await writeFile(inputPath, Buffer.from(arrayBuffer));
+      } else if (sound.dataBase64) {
+        await writeFile(inputPath, Buffer.from(sound.dataBase64, 'base64'));
+      } else {
+        throw new Error('Sound has no playable source.');
+      }
+
+      const inputSource = inputPath;
 
       const ffmpeg = spawn(ffmpegBinaryPath, [
         '-re',
         '-i',
-        inputPath,
+        inputSource,
         '-vn',
         '-ac',
         '2',
@@ -240,9 +280,15 @@ const onLoad = async (ctx: PluginContext) => {
         '48000',
         '-c:a',
         'libopus',
+        '-application',
+        'audio',
+        '-payload_type',
+        `${RTP_AUDIO_PAYLOAD_TYPE}`,
+        '-ssrc',
+        `${audioSsrc}`,
         '-f',
         'rtp',
-        `rtp://127.0.0.1:${transport.tuple.localPort}?pkt_size=1200`
+        `rtp://${ip}:${transport.tuple.localPort}?pkt_size=1200`
       ]);
 
       const playback: TRuntimePlayback = {
@@ -257,6 +303,10 @@ const onLoad = async (ctx: PluginContext) => {
         userId: invokerCtx.userId,
         channelId,
         ffmpegPid: ffmpeg.pid
+      });
+
+      ffmpeg.stderr.on('data', (chunk) => {
+        ctx.debug('ffmpeg stderr', String(chunk));
       });
 
       ffmpeg.on('exit', async () => {
