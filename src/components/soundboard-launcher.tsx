@@ -1,5 +1,5 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { SoundboardPanel } from './soundboard-panel';
@@ -15,8 +15,7 @@ const SoundboardLauncher = (ctx: TPluginSlotContext) => {
     setMounted(true);
   }, []);
 
-  const updatePanelPosition = useMemo(
-    () => () => {
+  const updatePanelPosition = useCallback(() => {
       const buttonRect = containerRef.current?.getBoundingClientRect();
       if (!buttonRect) {
         return;
@@ -38,9 +37,7 @@ const SoundboardLauncher = (ctx: TPluginSlotContext) => {
         maxWidth: 'calc(100vw - 1rem)',
         zIndex: 2147483647
       });
-    },
-    []
-  );
+  }, []);
 
   useEffect(() => {
     if (!open) {
@@ -86,7 +83,7 @@ const SoundboardLauncher = (ctx: TPluginSlotContext) => {
         type="button"
         onClick={() => setOpen((v) => !v)}
         title="Open Soundboard"
-        className="flex h-8 w-8 items-center justify-center rounded p-0 text-sm leading-none hover:bg-accent"
+        className="flex h-8 w-8 items-center justify-center rounded p-0 text-sm leading-none text-foreground/70 hover:bg-accent hover:text-foreground"
         aria-expanded={open}
         aria-haspopup="dialog"
       >

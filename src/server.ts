@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access, mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import { type TListSoundsResponse, type TSoundEntry } from './types';
 
 const SOUNDS_SETTINGS_KEY = 'soundsJson';
+const PUBLIC_MIRROR_FILENAME_SETTINGS_KEY = 'publicMirrorFileName';
 const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 2;
 const RTP_AUDIO_PAYLOAD_TYPE = 111;
 
@@ -42,6 +43,79 @@ const soundsCache: { get: (() => Promise<TSoundEntry[]>) | null; set: ((sounds: 
 };
 const activePlaybackByUser = new Map<number, TRuntimePlayback>();
 
+type TPublicWriteProbeResult = {
+  ok: boolean;
+  baseDir: string | null;
+  mirrorUrls: string[];
+  tried: string[];
+  error?: string;
+};
+
+let publicWriteProbeResult: TPublicWriteProbeResult = {
+  ok: false,
+  baseDir: null,
+  mirrorUrls: [],
+  tried: []
+};
+
+let getConfiguredMirrorFileName: (() => Promise<string | null>) | null = null;
+
+const sanitizeMirrorFileName = (value: string | null | undefined) => {
+  if (!value) return null;
+
+  const normalized = basename(value.trim());
+  if (!normalized || normalized === '.' || normalized === '..') return null;
+  return normalized;
+};
+
+const getPublicSoundsMirrorPaths = async () => {
+  if (!publicWriteProbeResult.ok || !publicWriteProbeResult.baseDir) {
+    return { paths: [] as string[], urls: [] as string[] };
+  }
+
+  const baseDir = publicWriteProbeResult.baseDir;
+  const publicDir = dirname(baseDir);
+  const configuredFileName = sanitizeMirrorFileName(await getConfiguredMirrorFileName?.());
+
+  const entries = [
+    { path: join(baseDir, 'sounds.json'), url: '/public/soundboard/sounds.json' },
+    { path: join(publicDir, 'soundboard-sounds.json'), url: '/public/soundboard-sounds.json' },
+    configuredFileName
+      ? { path: join(publicDir, configuredFileName), url: `/public/${encodeURIComponent(configuredFileName)}` }
+      : null
+  ].filter((entry): entry is { path: string; url: string } => Boolean(entry));
+
+  const dedupe = new Map<string, string>();
+  for (const entry of entries) {
+    if (!dedupe.has(entry.path)) dedupe.set(entry.path, entry.url);
+  }
+
+  return {
+    paths: Array.from(dedupe.keys()),
+    urls: Array.from(dedupe.values())
+  };
+};
+
+const syncPublicSoundsMirror = async (ctx: PluginContext, sounds: TSoundEntry[]) => {
+  const { paths, urls } = await getPublicSoundsMirrorPaths();
+  if (paths.length === 0) return;
+
+  const payload = JSON.stringify({ sounds });
+
+  for (const mirrorPath of paths) {
+    try {
+      await writeFile(mirrorPath, payload, 'utf8');
+    } catch (error) {
+      ctx.debug('[soundboard] could not write public sounds mirror', { mirrorPath, error });
+    }
+  }
+
+  publicWriteProbeResult = {
+    ...publicWriteProbeResult,
+    mirrorUrls: urls
+  };
+};
+
 const parseSounds = (raw: unknown): TSoundEntry[] => {
   if (typeof raw !== 'string' || raw.length === 0) return [];
 
@@ -61,6 +135,62 @@ const parseSounds = (raw: unknown): TSoundEntry[] => {
   } catch {
     return [];
   }
+};
+
+
+const probePublicWriteAccess = async (ctx: PluginContext): Promise<TPublicWriteProbeResult> => {
+  const envPublicDir = process.env.SHARKORD_PUBLIC_DIR?.trim();
+  const candidates = [
+    envPublicDir,
+    join(ctx.path, '..', '..', 'public'),
+    join(ctx.path, '..', 'public'),
+    '/public'
+  ].filter((value): value is string => Boolean(value));
+
+  const tried: string[] = [];
+
+  for (const candidate of candidates) {
+    const baseDir = join(candidate, 'soundboard');
+    const probePath = join(baseDir, 'write-probe.json');
+
+    try {
+      tried.push(baseDir);
+      await mkdir(baseDir, { recursive: true });
+      await access(baseDir, fsConstants.W_OK);
+      await writeFile(
+        probePath,
+        JSON.stringify({ ok: true, createdAt: Date.now(), pluginPath: ctx.path })
+      );
+      await rm(probePath, { force: true });
+
+      const result: TPublicWriteProbeResult = {
+        ok: true,
+        baseDir,
+        mirrorUrls: [],
+        tried
+      };
+      publicWriteProbeResult = result;
+      ctx.log(`[soundboard] public write probe succeeded at: ${baseDir}`);
+      return result;
+    } catch (error) {
+      ctx.debug(`[soundboard] public write probe failed at: ${baseDir}`, error);
+    }
+  }
+
+  const result: TPublicWriteProbeResult = {
+    ok: false,
+    baseDir: null,
+    mirrorUrls: [],
+    tried,
+    error: 'No writable public/soundboard directory found.'
+  };
+
+  publicWriteProbeResult = result;
+  ctx.log(
+    `[soundboard] public write probe failed for all candidate paths. Tried: ${tried.join(', ') || 'none'}`
+  );
+
+  return result;
 };
 
 const stopPlaybackForUser = (ctx: PluginContext, userId: number) => {
@@ -87,6 +217,7 @@ const onLoad = async (ctx: PluginContext) => {
   ctx.log('Initializing soundboard plugin UI and command handlers');
   const ffmpegBinaryPath = await assertFfmpegBinary(ctx.path);
   ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
+  await probePublicWriteAccess(ctx);
 
   const settings = await ctx.settings.register([
     {
@@ -95,11 +226,25 @@ const onLoad = async (ctx: PluginContext) => {
       description: 'Managed by the soundboard plugin. Do not edit manually.',
       type: 'string',
       defaultValue: '[]'
+    },
+    {
+      key: PUBLIC_MIRROR_FILENAME_SETTINGS_KEY,
+      name: 'Public mirror filename',
+      description: 'Optional. Public filename to mirror sounds JSON into (for example: uploaded-sounds.json).',
+      type: 'string',
+      defaultValue: 'soundboard-sounds.json'
     }
   ] as const);
 
+  getConfiguredMirrorFileName = async () => settings.get(PUBLIC_MIRROR_FILENAME_SETTINGS_KEY);
+
   soundsCache.get = async () => parseSounds(await settings.get(SOUNDS_SETTINGS_KEY));
-  soundsCache.set = async (sounds: TSoundEntry[]) => settings.set(SOUNDS_SETTINGS_KEY, JSON.stringify(sounds));
+  soundsCache.set = async (sounds: TSoundEntry[]) => {
+    await settings.set(SOUNDS_SETTINGS_KEY, JSON.stringify(sounds));
+    await syncPublicSoundsMirror(ctx, sounds);
+  };
+
+  await syncPublicSoundsMirror(ctx, await soundsCache.get());
 
   ctx.log('Enabling plugin UI components');
   ctx.ui.enable();
@@ -116,6 +261,8 @@ const onLoad = async (ctx: PluginContext) => {
       return payload;
     }
   });
+
+
 
   ctx.commands.register({
     name: 'upload_sound',
