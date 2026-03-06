@@ -6,14 +6,24 @@ import type { TSoundEntry } from '../types';
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
 
 const EMOJI_OPTIONS = [
+  '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
+  '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
+  '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪',
+  '😝', '🤑', '🤗', '🤭', '🫢', '🫣', '🤫', '🤔',
+  '🫡', '🤐', '🤨', '😐', '😑', '😶', '🫥', '😏',
+  '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤',
+  '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵',
+  '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓',
+  '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️'
+];
+
+const EMOJI_OPTIONS = [
   '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️',
   '🔥', '💥', '⚡', '✨', '⭐', '🌟', '🚀', '🎯',
   '😂', '😎', '🥳', '😈', '🤖', '👀', '👏', '✅',
   '💀', '👾', '🐺', '🐉', '🧠', '💎', '🕺', '💃',
   '❤️', '💙', '💜', '🧡', '💚', '🤍', '🖤', '💛'
 ];
-
-type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 const debugLog = (event: string, details?: Record<string, unknown>) => {
   console.info('[soundboard][debug]', event, details || {});
@@ -212,7 +222,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
             />
             <button
               type="button"
-              className="h-11 w-11 shrink-0 rounded border text-2xl leading-none hover:bg-accent"
+              className="inline-flex h-11 min-h-11 w-11 min-w-11 shrink-0 items-center justify-center rounded border p-0 text-2xl leading-none hover:bg-accent"
               onClick={() => setShowEmojiPicker((v) => !v)}
               title="Pick emoji"
               aria-label="Pick emoji"
