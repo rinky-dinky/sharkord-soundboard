@@ -1,5 +1,5 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
@@ -133,12 +133,17 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     [executeCommand]
   );
 
+  const runCommandRef = useRef(runCommand);
+  useEffect(() => {
+    runCommandRef.current = runCommand;
+  }, [runCommand]);
+
   useEffect(() => {
     let isMounted = true;
 
     const loadAuthoritativeSounds = async () => {
       try {
-        const response = await runCommand('list_sounds');
+        const response = await runCommandRef.current('list_sounds');
         const authoritativeSounds = (response as { sounds?: TSoundEntry[] } | null)?.sounds;
 
         if (Array.isArray(authoritativeSounds) && isMounted) {
@@ -154,7 +159,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     return () => {
       isMounted = false;
     };
-  }, [runCommand]);
+  }, []);
 
   const onUpload = useCallback(async () => {
     if (!sourceUrl.trim()) {
