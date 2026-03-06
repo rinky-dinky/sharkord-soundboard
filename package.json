@@ -1,6 +1,6 @@
 {
   "name": "sharkord-soundboard",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "module": "src/server.ts",
   "type": "module",
   "sharkord": {
@@ -8,9 +8,10 @@
       "server": "server.js",
       "client": "client.js"
     },
-    "author": "Codex",
+    "author": "rinky-dinky",
     "description": "In-app soundboard plugin for Sharkord voice calls.",
-    "homepage": "https://github.com/Sharkord/sharkord"
+    "homepage": "https://github.com/rinky-dinky/sharkord-soundboard",
+    "logo": "https://imgur.com/a/rK1WS4u"
   },
   "scripts": {
     "build": "bun build.ts",
