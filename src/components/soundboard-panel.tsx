@@ -1,5 +1,5 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
@@ -151,10 +151,8 @@ const resolveSettingsGetters = (ctx: TPluginSlotContext): TSettingsGetterCandida
 const callDirectCandidate = async (candidate: TDirectCommandCandidate, commandName: string): Promise<unknown> => {
   const attempts: unknown[][] = [
     [commandName],
-    [commandName, undefined],
     [{ commandName, args: {} }],
-    [{ name: commandName, args: {} }],
-    [{ command: commandName, args: {} }]
+    [{ name: commandName, args: {} }]
   ];
 
   for (const args of attempts) {
@@ -181,6 +179,22 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const directCandidatesRef = useRef(directCandidates);
+  const settingsGettersRef = useRef(settingsGetters);
+  const executeCommandRef = useRef(executeCommand);
+
+  useEffect(() => {
+    directCandidatesRef.current = directCandidates;
+  }, [directCandidates]);
+
+  useEffect(() => {
+    settingsGettersRef.current = settingsGetters;
+  }, [settingsGetters]);
+
+  useEffect(() => {
+    executeCommandRef.current = executeCommand;
+  }, [executeCommand]);
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem(LOCAL_SOUNDS_CACHE_KEY);
@@ -199,9 +213,11 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
     const loadAuthoritativeSounds = async () => {
       const hasLogged = Boolean((window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG]);
+      const directCandidatesSnapshot = directCandidatesRef.current.slice(0, 4);
+      const settingsGettersSnapshot = settingsGettersRef.current.slice(0, 4);
 
-      for (let index = 0; index < directCandidates.length; index += 1) {
-        const raw = await callDirectCandidate(directCandidates[index]!, 'list_sounds');
+      for (let index = 0; index < directCandidatesSnapshot.length; index += 1) {
+        const raw = await callDirectCandidate(directCandidatesSnapshot[index]!, 'list_sounds');
         const extracted = extractSounds(raw);
 
         if (!hasLogged) {
@@ -219,9 +235,9 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
         }
       }
 
-      for (let index = 0; index < settingsGetters.length; index += 1) {
+      for (let index = 0; index < settingsGettersSnapshot.length; index += 1) {
         try {
-          const raw = await Promise.resolve(settingsGetters[index]!('soundsJson'));
+          const raw = await Promise.resolve(settingsGettersSnapshot[index]!('soundsJson'));
           const extracted = extractSounds(raw);
 
           if (!hasLogged) {
@@ -242,7 +258,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
         }
       }
 
-      const fallback = await executeCommand('list_sounds');
+      const fallback = await executeCommandRef.current('list_sounds');
       const extracted = extractSounds(fallback);
 
       if (!hasLogged) {
@@ -265,7 +281,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     return () => {
       mounted = false;
     };
-  }, [ctx, directCandidates, executeCommand, settingsGetters]);
+  }, []);
 
   const runCommand = useCallback(
     async (commandName: string, args?: Record<string, unknown>) => {
