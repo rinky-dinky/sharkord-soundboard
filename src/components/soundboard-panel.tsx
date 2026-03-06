@@ -4,7 +4,6 @@ import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
 const COMMAND_RESPONSE_TIMEOUT_MS = 6000;
-const PUBLIC_SOUNDS_JSON_URLS = ['/public/soundboard/sounds.json', '/public/soundboard-sounds.json'];
 
 const EMOJI_OPTIONS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
@@ -117,21 +116,6 @@ const waitForCommandResponse = (commandName: string, timeoutMs: number): Promise
   });
 };
 
-const fetchPublicSoundsJson = async (): Promise<{ sounds: TSoundEntry[]; url: string } | null> => {
-  for (const url of PUBLIC_SOUNDS_JSON_URLS) {
-    try {
-      const response = await fetch(`${url}?t=${Date.now()}`, { cache: 'no-store' });
-      if (!response.ok) continue;
-
-      const payload = await response.json();
-      const sounds = extractSounds(payload);
-      if (Array.isArray(sounds)) return { sounds, url };
-    } catch {}
-  }
-
-  return null;
-};
-
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) => {
@@ -205,13 +189,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     let mounted = true;
 
     const syncFromAuthoritativeJson = async () => {
-      const publicSounds = await fetchPublicSoundsJson();
-      if (publicSounds) {
-        debugLog('public_sounds_json.loaded', { count: publicSounds.sounds.length, url: publicSounds.url });
-        if (mounted) setSounds(publicSounds.sounds);
-        return;
-      }
-
       await executeCommandRef.current('list_sounds');
       const responsePayload = await waitForCommandResponse('list_sounds', COMMAND_RESPONSE_TIMEOUT_MS);
       const serverSounds = extractSounds(responsePayload);
@@ -227,7 +204,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     };
 
     syncFromAuthoritativeJson().catch((e) => {
-      console.info('[soundboard] could not sync sounds from public json or command response', e instanceof Error ? e.message : String(e));
+      console.info('[soundboard] could not sync sounds from command response', e instanceof Error ? e.message : String(e));
     });
 
     return () => {
