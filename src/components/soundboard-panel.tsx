@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
+const LIST_SOUNDS_DEBUG_DONE_FLAG = '__sharkordSoundboardListSoundsDebugDone';
 
 const EMOJI_OPTIONS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
@@ -22,6 +23,31 @@ type TDirectExecuteCommand = (commandName: string, args?: Record<string, unknown
 
 const debugLog = (event: string, details?: Record<string, unknown>) => {
   console.info('[soundboard][debug]', event, details || {});
+};
+
+
+const summarizeResponseForDebug = (response: unknown): Record<string, unknown> => {
+  const parsed = tryParseJsonString(response);
+
+  if (Array.isArray(parsed)) {
+    return {
+      type: 'array',
+      length: parsed.length,
+      firstItemType: parsed.length > 0 ? typeof parsed[0] : 'empty'
+    };
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return { type: typeof parsed, value: parsed };
+  }
+
+  const record = parsed as Record<string, unknown>;
+  return {
+    type: 'object',
+    keys: Object.keys(record),
+    soundsIsArray: Array.isArray(record.sounds),
+    soundsLength: Array.isArray(record.sounds) ? record.sounds.length : undefined
+  };
 };
 
 const tryParseJsonString = (value: unknown): unknown => {
@@ -200,18 +226,40 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
     const loadAuthoritativeSounds = async () => {
       try {
-        for (const directExecutor of directExecutors) {
+        const hasRunDebugPass = Boolean((window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG]);
+
+        for (let index = 0; index < directExecutors.length; index += 1) {
+          const directExecutor = directExecutors[index]!;
           const response = await directExecutor('list_sounds');
           const authoritativeSounds = extractSoundsFromCommandResponse(response);
 
+          if (!hasRunDebugPass) {
+            console.info('[soundboard][debug] list_sounds direct executor response', {
+              executorIndex: index,
+              summary: summarizeResponseForDebug(response),
+              raw: response
+            });
+          }
+
           if (Array.isArray(authoritativeSounds) && isMounted) {
             setSounds(authoritativeSounds);
+            if (!hasRunDebugPass) {
+              (window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG] = true;
+            }
             return;
           }
         }
 
         const response = await runCommandRef.current('list_sounds');
         const authoritativeSounds = extractSoundsFromCommandResponse(response);
+
+        if (!hasRunDebugPass) {
+          console.info('[soundboard][debug] list_sounds fallback executor response', {
+            summary: summarizeResponseForDebug(response),
+            raw: response
+          });
+          (window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG] = true;
+        }
 
         if (Array.isArray(authoritativeSounds) && isMounted) {
           setSounds(authoritativeSounds);
