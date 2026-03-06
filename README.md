@@ -42,12 +42,11 @@ The soundboard UI reads shared sounds from a public JSON mirror file.
 In plugin settings, `Public mirror filename` defaults to `soundboard-sounds.json`.
 Keep this matching the uploaded JSON filename unless you intentionally changed it.
 
-## Adding sounds
+## To add a sound to the soundboard
 
-To add a sound from Sharkord:
 
-1. Attach an audio file to a message in a text channel.
-2. Right-click the audio attachment and click **Copy link address**.
+1. Attach an audio file to a message in a text channel, then send the message.
+2. Right-click the sent audio attachment and click **Copy link address**.
 3. Open the soundboard panel.
 4. Enter:
    - **Sound name**
