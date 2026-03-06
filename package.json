@@ -11,7 +11,7 @@
     "author": "rinky-dinky",
     "description": "In-app soundboard plugin for Sharkord voice calls.",
     "homepage": "https://github.com/rinky-dinky/sharkord-soundboard",
-    "logo": "https://imgur.com/a/rK1WS4u"
+    "logo": "https://i.imgur.com/0SvAftr.png"
   },
   "scripts": {
     "build": "bun build.ts",
