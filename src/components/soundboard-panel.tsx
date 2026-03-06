@@ -1,9 +1,9 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { createTRPCProxyClient, createWSClient, wsLink } from '@trpc/client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
+const LIST_SOUNDS_DEBUG_DONE_FLAG = '__sharkordSoundboardListSoundsDebugDone';
 
 const EMOJI_OPTIONS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
@@ -19,8 +19,96 @@ const EMOJI_OPTIONS = [
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
+type TDirectCommandCandidate = (...args: unknown[]) => unknown;
+type TDirectExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
+
 const debugLog = (event: string, details?: Record<string, unknown>) => {
   console.info('[soundboard][debug]', event, details || {});
+};
+
+
+const summarizeResponseForDebug = (response: unknown): Record<string, unknown> => {
+  const parsed = tryParseJsonString(response);
+
+  if (Array.isArray(parsed)) {
+    return {
+      type: 'array',
+      length: parsed.length,
+      firstItemType: parsed.length > 0 ? typeof parsed[0] : 'empty'
+    };
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return { type: typeof parsed, value: parsed };
+  }
+
+  const record = parsed as Record<string, unknown>;
+  return {
+    type: 'object',
+    keys: Object.keys(record),
+    soundsIsArray: Array.isArray(record.sounds),
+    soundsLength: Array.isArray(record.sounds) ? record.sounds.length : undefined
+  };
+};
+
+const tryParseJsonString = (value: unknown): unknown => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+const extractSoundsFromCommandResponse = (response: unknown): TSoundEntry[] | null => {
+  const visited = new Set<unknown>();
+
+  const search = (value: unknown, depth: number): TSoundEntry[] | null => {
+    if (depth > 6 || value === null || value === undefined) {
+      return null;
+    }
+
+    const normalizedValue = tryParseJsonString(value);
+
+    if (Array.isArray(normalizedValue)) {
+      if (normalizedValue.every((entry) => entry && typeof entry === 'object' && 'id' in entry && 'name' in entry)) {
+        return normalizedValue as TSoundEntry[];
+      }
+
+      for (const child of normalizedValue) {
+        const found = search(child, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    if (!normalizedValue || typeof normalizedValue !== 'object') {
+      return null;
+    }
+
+    if (visited.has(normalizedValue)) {
+      return null;
+    }
+    visited.add(normalizedValue);
+
+    const record = normalizedValue as Record<string, unknown>;
+
+    if (Array.isArray(record.sounds)) {
+      return record.sounds as TSoundEntry[];
+    }
+
+    for (const child of Object.values(record)) {
+      const found = search(child, depth + 1);
+      if (found) return found;
+    }
+
+    return null;
+  };
+
+  return search(response, 0);
 };
 
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
@@ -38,11 +126,75 @@ const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) 
   return `/${commandName} ${orderedArgValues.join(' ')}`;
 };
 
-const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
+const resolveDirectCommandCandidates = (ctx: TPluginSlotContext): TDirectCommandCandidate[] => {
+  const runtimeCtx = ctx as any;
+  const sharkordGlobal = (window as any)?.sharkord;
+
+  const candidates = [
+    runtimeCtx?.executeCommand,
+    runtimeCtx?.executePluginCommand,
+    runtimeCtx?.invokePluginCommand,
+    runtimeCtx?.invokeCommand,
+    runtimeCtx?.commands?.execute,
+    runtimeCtx?.commands?.executeCommand,
+    runtimeCtx?.commands?.invoke,
+    runtimeCtx?.plugins?.executeCommand,
+    runtimeCtx?.plugins?.execute,
+    runtimeCtx?.plugins?.invoke,
+    sharkordGlobal?.executeCommand,
+    sharkordGlobal?.executePluginCommand,
+    sharkordGlobal?.invokePluginCommand,
+    sharkordGlobal?.invokeCommand,
+    sharkordGlobal?.commands?.execute,
+    sharkordGlobal?.commands?.executeCommand,
+    sharkordGlobal?.commands?.invoke,
+    sharkordGlobal?.plugins?.executeCommand,
+    sharkordGlobal?.plugins?.execute,
+    sharkordGlobal?.plugins?.invoke
+  ];
+
+  return Array.from(new Set(candidates.filter((candidate) => typeof candidate === 'function')));
+};
+
+const callDirectCandidate = async (
+  candidate: TDirectCommandCandidate,
+  commandName: string,
+  args?: Record<string, unknown>
+): Promise<unknown> => {
+  const payloadArgs = args ?? {};
+  const attempts: unknown[][] = [
+    [commandName, args],
+    [{ commandName, args: payloadArgs }],
+    [{ name: commandName, args: payloadArgs }],
+    [{ command: commandName, args: payloadArgs }]
+  ];
+
+  for (const attemptArgs of attempts) {
+    try {
+      return await Promise.resolve(candidate(...attemptArgs));
+    } catch {
+      // try next signature
+    }
+  }
+
+  return undefined;
+};
+
+const wrapDirectCandidates = (candidates: TDirectCommandCandidate[]): TDirectExecuteCommand[] => {
+  return candidates.map((candidate) => async (commandName, args) => callDirectCandidate(candidate, commandName, args));
+};
+
+const getCommandExecutor = (ctx: TPluginSlotContext, directExecutors: TDirectExecuteCommand[]): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sendMessage = runtimeCtx?.sendMessage as ((channelId: number, content: string) => void) | undefined;
+  const primaryDirectExecutor = directExecutors[0];
 
   return async (commandName, args) => {
+    if (primaryDirectExecutor) {
+      debugLog('command.execute.direct', { commandName });
+      return primaryDirectExecutor(commandName, args);
+    }
+
     const selectedChannelId = runtimeCtx?.selectedChannelId as number | undefined;
 
     if (!sendMessage || !selectedChannelId) {
@@ -58,10 +210,6 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
 
     await Promise.resolve(sendMessage(selectedChannelId, commandText));
 
-    if (commandName === 'list_sounds') {
-      return { sounds: [] };
-    }
-
     return { queued: true };
   };
 };
@@ -69,30 +217,9 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
 
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
-  const executeCommand = useMemo(() => getCommandExecutor(ctx), [ctx]);
-  const bridgeAvailable = useMemo(() => {
-    const runtimeCtx = ctx as any;
-    const sharkordGlobal = (window as any)?.sharkord;
-
-    const candidates = [
-      runtimeCtx?.executeCommand,
-      runtimeCtx?.executePluginCommand,
-      runtimeCtx?.invokePluginCommand,
-      runtimeCtx?.commands?.execute,
-      runtimeCtx?.commands?.executeCommand,
-      runtimeCtx?.plugins?.executeCommand,
-      runtimeCtx?.plugins?.execute,
-      sharkordGlobal?.executeCommand,
-      sharkordGlobal?.executePluginCommand,
-      sharkordGlobal?.commands?.execute,
-      sharkordGlobal?.commands?.executeCommand,
-      sharkordGlobal?.plugins?.executeCommand,
-      sharkordGlobal?.plugins?.execute
-    ];
-
-    return candidates.some((candidate) => typeof candidate === 'function');
-  }, [ctx]);
-
+  const directCandidates = useMemo(() => resolveDirectCommandCandidates(ctx), [ctx]);
+  const directExecutors = useMemo(() => wrapDirectCandidates(directCandidates), [directCandidates]);
+  const executeCommand = useMemo(() => getCommandExecutor(ctx, directExecutors), [ctx, directExecutors]);
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
@@ -125,6 +252,69 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     [executeCommand]
   );
 
+  const runCommandRef = useRef(runCommand);
+  useEffect(() => {
+    runCommandRef.current = runCommand;
+  }, [runCommand]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAuthoritativeSounds = async () => {
+      try {
+        const hasRunDebugPass = Boolean((window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG]);
+
+        for (let index = 0; index < directExecutors.length; index += 1) {
+          const directExecutor = directExecutors[index]!;
+          const response = await directExecutor('list_sounds');
+          const authoritativeSounds = extractSoundsFromCommandResponse(response);
+
+          if (!hasRunDebugPass) {
+            console.info('[soundboard][debug] list_sounds direct executor response', {
+              executorIndex: index,
+              executorCount: directExecutors.length,
+              summary: summarizeResponseForDebug(response),
+              raw: response
+            });
+          }
+
+          if (Array.isArray(authoritativeSounds) && isMounted) {
+            setSounds(authoritativeSounds);
+            if (!hasRunDebugPass) {
+              (window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG] = true;
+            }
+            return;
+          }
+        }
+
+        const response = await runCommandRef.current('list_sounds');
+        const authoritativeSounds = extractSoundsFromCommandResponse(response);
+
+        if (!hasRunDebugPass) {
+          console.info('[soundboard][debug] list_sounds fallback executor response', {
+            summary: summarizeResponseForDebug(response),
+            raw: response
+          });
+          (window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG] = true;
+        }
+
+        if (Array.isArray(authoritativeSounds) && isMounted) {
+          setSounds(authoritativeSounds);
+          return;
+        }
+
+        console.info('[soundboard] list_sounds returned no usable sounds payload', response);
+      } catch (e) {
+        console.info('[soundboard] could not load authoritative sounds', e);
+      }
+    };
+
+    loadAuthoritativeSounds();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const onUpload = useCallback(async () => {
     if (!sourceUrl.trim()) {
@@ -176,7 +366,14 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       try {
         await runCommand('play_sound', { soundId });
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        const message = e instanceof Error ? e.message : String(e);
+
+        if (/sound not found/i.test(message)) {
+          setSounds((prev) => prev.filter((entry) => entry.id !== soundId));
+          setError('That sound no longer exists and was removed from your local list.');
+        } else {
+          setError(message);
+        }
       } finally {
         setLoading(false);
       }
@@ -216,7 +413,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
             />
             <button
               type="button"
-              className="inline-flex h-11 min-h-11 w-11 min-w-11 shrink-0 items-center justify-center rounded border p-0 text-2xl leading-none hover:bg-accent"
+              className="inline-flex h-9 min-h-9 w-9 min-w-9 shrink-0 items-center justify-center rounded border p-0 text-xl leading-none hover:bg-accent"
               onClick={() => setShowEmojiPicker((v) => !v)}
               title="Pick emoji"
               aria-label="Pick emoji"
