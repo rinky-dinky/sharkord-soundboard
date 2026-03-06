@@ -63,6 +63,43 @@ const parseSounds = (raw: unknown): TSoundEntry[] => {
   }
 };
 
+
+const probePublicWriteAccess = async (ctx: PluginContext) => {
+  const envPublicDir = process.env.SHARKORD_PUBLIC_DIR?.trim();
+  const candidates = [
+    envPublicDir,
+    join(ctx.path, '..', '..', 'public'),
+    join(ctx.path, '..', 'public'),
+    '/public'
+  ].filter((value): value is string => Boolean(value));
+
+  const tried: string[] = [];
+
+  for (const candidate of candidates) {
+    const baseDir = join(candidate, 'soundboard');
+    const probePath = join(baseDir, 'write-probe.json');
+
+    try {
+      tried.push(baseDir);
+      await mkdir(baseDir, { recursive: true });
+      await access(baseDir, fsConstants.W_OK);
+      await writeFile(
+        probePath,
+        JSON.stringify({ ok: true, createdAt: Date.now(), pluginPath: ctx.path })
+      );
+      await rm(probePath, { force: true });
+      ctx.log(`[soundboard] public write probe succeeded at: ${baseDir}`);
+      return;
+    } catch (error) {
+      ctx.debug(`[soundboard] public write probe failed at: ${baseDir}`, error);
+    }
+  }
+
+  ctx.log(
+    `[soundboard] public write probe failed for all candidate paths. Tried: ${tried.join(', ') || 'none'}`
+  );
+};
+
 const stopPlaybackForUser = (ctx: PluginContext, userId: number) => {
   const playback = activePlaybackByUser.get(userId);
   if (!playback) return;
@@ -87,6 +124,7 @@ const onLoad = async (ctx: PluginContext) => {
   ctx.log('Initializing soundboard plugin UI and command handlers');
   const ffmpegBinaryPath = await assertFfmpegBinary(ctx.path);
   ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
+  await probePublicWriteAccess(ctx);
 
   const settings = await ctx.settings.register([
     {
