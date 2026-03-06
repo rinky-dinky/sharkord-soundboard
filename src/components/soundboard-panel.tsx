@@ -1,9 +1,9 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
-const LIST_SOUNDS_DEBUG_DONE_FLAG = '__sharkordSoundboardListSoundsDebugDone';
+const COMMAND_RESPONSE_TIMEOUT_MS = 6000;
 
 const EMOJI_OPTIONS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
@@ -18,8 +18,6 @@ const EMOJI_OPTIONS = [
 ];
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
-type TDirectCommandCandidate = (...args: unknown[]) => unknown;
-type TSettingsGetterCandidate = (key: string) => unknown;
 
 const debugLog = (event: string, details?: Record<string, unknown>) => {
   console.info('[soundboard][debug]', event, details || {});
@@ -27,21 +25,34 @@ const debugLog = (event: string, details?: Record<string, unknown>) => {
 
 const tryParseJsonString = (value: unknown): unknown => {
   if (typeof value !== 'string') return value;
+
   try {
     return JSON.parse(value);
   } catch {
-    return value;
+    try {
+      return JSON.parse(decodeURIComponent(value));
+    } catch {
+      return value;
+    }
   }
 };
 
 const extractSounds = (value: unknown): TSoundEntry[] | null => {
   const parsed = tryParseJsonString(value);
 
-  if (Array.isArray(parsed)) return parsed as TSoundEntry[];
-  if (!parsed || typeof parsed !== 'object') return null;
+  if (Array.isArray(parsed)) {
+    return parsed as TSoundEntry[];
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
 
   const record = parsed as Record<string, unknown>;
-  if (Array.isArray(record.sounds)) return record.sounds as TSoundEntry[];
+
+  if (Array.isArray(record.sounds)) {
+    return record.sounds as TSoundEntry[];
+  }
 
   for (const child of Object.values(record)) {
     const found = extractSounds(child);
@@ -51,17 +62,58 @@ const extractSounds = (value: unknown): TSoundEntry[] | null => {
   return null;
 };
 
-const summarizeResponseForDebug = (value: unknown) => {
-  const parsed = tryParseJsonString(value);
-  if (Array.isArray(parsed)) return { type: 'array', length: parsed.length };
-  if (!parsed || typeof parsed !== 'object') return { type: typeof parsed };
-  const record = parsed as Record<string, unknown>;
-  return {
-    type: 'object',
-    keys: Object.keys(record),
-    soundsIsArray: Array.isArray(record.sounds),
-    soundsLength: Array.isArray(record.sounds) ? record.sounds.length : undefined
-  };
+const extractResponseFromCommandElement = (el: Element): unknown => {
+  const rawResponse = el.getAttribute('data-response');
+  if (!rawResponse) return null;
+  return tryParseJsonString(rawResponse);
+};
+
+const getLatestCommandResponse = (commandName: string): unknown => {
+  const nodes = Array.from(document.querySelectorAll(`[data-command="${commandName}"]`));
+  if (nodes.length === 0) return null;
+
+  for (let i = nodes.length - 1; i >= 0; i -= 1) {
+    const node = nodes[i]!;
+    const status = node.getAttribute('data-status');
+
+    if (status === 'failed' || status === 'completed') {
+      const parsed = extractResponseFromCommandElement(node);
+      if (parsed !== null) return parsed;
+    }
+  }
+
+  return null;
+};
+
+const waitForCommandResponse = (commandName: string, timeoutMs: number): Promise<unknown> => {
+  return new Promise((resolve) => {
+    const immediate = getLatestCommandResponse(commandName);
+    if (immediate !== null) {
+      resolve(immediate);
+      return;
+    }
+
+    const timeoutHandle = window.setTimeout(() => {
+      observer.disconnect();
+      resolve(null);
+    }, timeoutMs);
+
+    const observer = new MutationObserver(() => {
+      const result = getLatestCommandResponse(commandName);
+      if (result !== null) {
+        window.clearTimeout(timeoutHandle);
+        observer.disconnect();
+        resolve(result);
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-status', 'data-response']
+    });
+  });
 };
 
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
@@ -103,74 +155,10 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   };
 };
 
-const resolveDirectCommandCandidates = (ctx: TPluginSlotContext): TDirectCommandCandidate[] => {
-  const runtimeCtx = ctx as any;
-  const sharkordGlobal = (window as any)?.sharkord;
-
-  const candidates = [
-    runtimeCtx?.executeCommand,
-    runtimeCtx?.executePluginCommand,
-    runtimeCtx?.invokePluginCommand,
-    runtimeCtx?.commands?.execute,
-    runtimeCtx?.commands?.executeCommand,
-    runtimeCtx?.plugins?.executeCommand,
-    runtimeCtx?.plugins?.execute,
-    sharkordGlobal?.executeCommand,
-    sharkordGlobal?.executePluginCommand,
-    sharkordGlobal?.commands?.execute,
-    sharkordGlobal?.commands?.executeCommand,
-    sharkordGlobal?.plugins?.executeCommand,
-    sharkordGlobal?.plugins?.execute
-  ];
-
-  return Array.from(new Set(candidates.filter((candidate) => typeof candidate === 'function')));
-};
-
-const resolveSettingsGetters = (ctx: TPluginSlotContext): TSettingsGetterCandidate[] => {
-  const runtimeCtx = ctx as any;
-  const sharkordGlobal = (window as any)?.sharkord;
-
-  const candidates = [
-    runtimeCtx?.settings?.get,
-    runtimeCtx?.settings?.getSetting,
-    runtimeCtx?.plugins?.settings?.get,
-    runtimeCtx?.plugins?.getSetting,
-    runtimeCtx?.getSetting,
-    runtimeCtx?.getPluginSetting,
-    sharkordGlobal?.settings?.get,
-    sharkordGlobal?.settings?.getSetting,
-    sharkordGlobal?.plugins?.settings?.get,
-    sharkordGlobal?.plugins?.getSetting,
-    sharkordGlobal?.getSetting,
-    sharkordGlobal?.getPluginSetting
-  ];
-
-  return Array.from(new Set(candidates.filter((candidate) => typeof candidate === 'function')));
-};
-
-const callDirectCandidate = async (candidate: TDirectCommandCandidate, commandName: string): Promise<unknown> => {
-  const attempts: unknown[][] = [
-    [commandName],
-    [{ commandName, args: {} }],
-    [{ name: commandName, args: {} }]
-  ];
-
-  for (const args of attempts) {
-    try {
-      return await Promise.resolve(candidate(...args));
-    } catch {
-      // continue trying signatures
-    }
-  }
-
-  return undefined;
-};
-
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
   const executeCommand = useMemo(() => getCommandExecutor(ctx), [ctx]);
-  const directCandidates = useMemo(() => resolveDirectCommandCandidates(ctx), [ctx]);
-  const settingsGetters = useMemo(() => resolveSettingsGetters(ctx), [ctx]);
+
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
@@ -178,22 +166,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const directCandidatesRef = useRef(directCandidates);
-  const settingsGettersRef = useRef(settingsGetters);
-  const executeCommandRef = useRef(executeCommand);
-
-  useEffect(() => {
-    directCandidatesRef.current = directCandidates;
-  }, [directCandidates]);
-
-  useEffect(() => {
-    settingsGettersRef.current = settingsGetters;
-  }, [settingsGetters]);
-
-  useEffect(() => {
-    executeCommandRef.current = executeCommand;
-  }, [executeCommand]);
 
   useEffect(() => {
     try {
@@ -211,77 +183,29 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   useEffect(() => {
     let mounted = true;
 
-    const loadAuthoritativeSounds = async () => {
-      const hasLogged = Boolean((window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG]);
-      const directCandidatesSnapshot = directCandidatesRef.current.slice(0, 4);
-      const settingsGettersSnapshot = settingsGettersRef.current.slice(0, 4);
+    const syncFromAuthoritativeJson = async () => {
+      await executeCommand('list_sounds');
+      const responsePayload = await waitForCommandResponse('list_sounds', COMMAND_RESPONSE_TIMEOUT_MS);
+      const serverSounds = extractSounds(responsePayload);
 
-      for (let index = 0; index < directCandidatesSnapshot.length; index += 1) {
-        const raw = await callDirectCandidate(directCandidatesSnapshot[index]!, 'list_sounds');
-        const extracted = extractSounds(raw);
+      debugLog('list_sounds.response.detected', {
+        hasPayload: responsePayload !== null,
+        soundsCount: Array.isArray(serverSounds) ? serverSounds.length : null
+      });
 
-        if (!hasLogged) {
-          console.info('[soundboard][debug] list_sounds direct candidate response', {
-            index,
-            summary: summarizeResponseForDebug(raw),
-            raw
-          });
-        }
-
-        if (Array.isArray(extracted) && mounted) {
-          setSounds(extracted);
-          if (!hasLogged) (window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG] = true;
-          return;
-        }
-      }
-
-      for (let index = 0; index < settingsGettersSnapshot.length; index += 1) {
-        try {
-          const raw = await Promise.resolve(settingsGettersSnapshot[index]!('soundsJson'));
-          const extracted = extractSounds(raw);
-
-          if (!hasLogged) {
-            console.info('[soundboard][debug] soundsJson getter response', {
-              index,
-              summary: summarizeResponseForDebug(raw),
-              raw
-            });
-          }
-
-          if (Array.isArray(extracted) && mounted) {
-            setSounds(extracted);
-            if (!hasLogged) (window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG] = true;
-            return;
-          }
-        } catch {
-          // continue
-        }
-      }
-
-      const fallback = await executeCommandRef.current('list_sounds');
-      const extracted = extractSounds(fallback);
-
-      if (!hasLogged) {
-        console.info('[soundboard][debug] list_sounds sendMessage fallback response', {
-          summary: summarizeResponseForDebug(fallback),
-          raw: fallback
-        });
-        (window as any)[LIST_SOUNDS_DEBUG_DONE_FLAG] = true;
-      }
-
-      if (Array.isArray(extracted) && mounted) {
-        setSounds(extracted);
+      if (Array.isArray(serverSounds) && mounted) {
+        setSounds(serverSounds);
       }
     };
 
-    loadAuthoritativeSounds().catch((e) => {
-      console.info('[soundboard] could not load authoritative sounds', e);
+    syncFromAuthoritativeJson().catch((e) => {
+      console.info('[soundboard] could not sync sounds from command response', e);
     });
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [executeCommand]);
 
   const runCommand = useCallback(
     async (commandName: string, args?: Record<string, unknown>) => {
