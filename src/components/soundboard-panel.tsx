@@ -4,7 +4,7 @@ import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
 const COMMAND_RESPONSE_TIMEOUT_MS = 6000;
-const PUBLIC_SOUNDS_JSON_URL = '/public/soundboard/sounds.json';
+const PUBLIC_SOUNDS_JSON_URLS = ['/public/soundboard/sounds.json', '/public/soundboard-sounds.json'];
 
 const EMOJI_OPTIONS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
@@ -117,17 +117,19 @@ const waitForCommandResponse = (commandName: string, timeoutMs: number): Promise
   });
 };
 
-const fetchPublicSoundsJson = async (): Promise<TSoundEntry[] | null> => {
-  try {
-    const response = await fetch(`${PUBLIC_SOUNDS_JSON_URL}?t=${Date.now()}`, { cache: 'no-store' });
-    if (!response.ok) return null;
+const fetchPublicSoundsJson = async (): Promise<{ sounds: TSoundEntry[]; url: string } | null> => {
+  for (const url of PUBLIC_SOUNDS_JSON_URLS) {
+    try {
+      const response = await fetch(`${url}?t=${Date.now()}`, { cache: 'no-store' });
+      if (!response.ok) continue;
 
-    const payload = await response.json();
-    const sounds = extractSounds(payload);
-    return Array.isArray(sounds) ? sounds : null;
-  } catch {
-    return null;
+      const payload = await response.json();
+      const sounds = extractSounds(payload);
+      if (Array.isArray(sounds)) return { sounds, url };
+    } catch {}
   }
+
+  return null;
 };
 
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
@@ -204,9 +206,9 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
     const syncFromAuthoritativeJson = async () => {
       const publicSounds = await fetchPublicSoundsJson();
-      if (Array.isArray(publicSounds)) {
-        debugLog('public_sounds_json.loaded', { count: publicSounds.length, url: PUBLIC_SOUNDS_JSON_URL });
-        if (mounted) setSounds(publicSounds);
+      if (publicSounds) {
+        debugLog('public_sounds_json.loaded', { count: publicSounds.sounds.length, url: publicSounds.url });
+        if (mounted) setSounds(publicSounds.sounds);
         return;
       }
 

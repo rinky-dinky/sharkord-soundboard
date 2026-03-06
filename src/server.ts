@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access, mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import { type TListSoundsResponse, type TSoundEntry } from './types';
@@ -45,6 +45,7 @@ const activePlaybackByUser = new Map<number, TRuntimePlayback>();
 type TPublicWriteProbeResult = {
   ok: boolean;
   baseDir: string | null;
+  mirrorUrls: string[];
   tried: string[];
   error?: string;
 };
@@ -52,22 +53,34 @@ type TPublicWriteProbeResult = {
 let publicWriteProbeResult: TPublicWriteProbeResult = {
   ok: false,
   baseDir: null,
+  mirrorUrls: [],
   tried: []
 };
 
-const getPublicSoundsMirrorPath = () => {
-  if (!publicWriteProbeResult.ok || !publicWriteProbeResult.baseDir) return null;
-  return join(publicWriteProbeResult.baseDir, 'sounds.json');
+const getPublicSoundsMirrorPaths = () => {
+  if (!publicWriteProbeResult.ok || !publicWriteProbeResult.baseDir) return [];
+
+  const baseDir = publicWriteProbeResult.baseDir;
+  const publicDir = dirname(baseDir);
+
+  return [
+    join(baseDir, 'sounds.json'),
+    join(publicDir, 'soundboard-sounds.json')
+  ];
 };
 
 const syncPublicSoundsMirror = async (ctx: PluginContext, sounds: TSoundEntry[]) => {
-  const mirrorPath = getPublicSoundsMirrorPath();
-  if (!mirrorPath) return;
+  const mirrorPaths = getPublicSoundsMirrorPaths();
+  if (mirrorPaths.length === 0) return;
 
-  try {
-    await writeFile(mirrorPath, JSON.stringify({ sounds }), 'utf8');
-  } catch (error) {
-    ctx.debug('[soundboard] could not write public sounds mirror', error);
+  const payload = JSON.stringify({ sounds });
+
+  for (const mirrorPath of mirrorPaths) {
+    try {
+      await writeFile(mirrorPath, payload, 'utf8');
+    } catch (error) {
+      ctx.debug('[soundboard] could not write public sounds mirror', { mirrorPath, error });
+    }
   }
 };
 
@@ -118,7 +131,12 @@ const probePublicWriteAccess = async (ctx: PluginContext): Promise<TPublicWriteP
       );
       await rm(probePath, { force: true });
 
-      const result: TPublicWriteProbeResult = { ok: true, baseDir, tried };
+      const result: TPublicWriteProbeResult = {
+        ok: true,
+        baseDir,
+        mirrorUrls: ['/public/soundboard/sounds.json', '/public/soundboard-sounds.json'],
+        tried
+      };
       publicWriteProbeResult = result;
       ctx.log(`[soundboard] public write probe succeeded at: ${baseDir}`);
       return result;
@@ -130,6 +148,7 @@ const probePublicWriteAccess = async (ctx: PluginContext): Promise<TPublicWriteP
   const result: TPublicWriteProbeResult = {
     ok: false,
     baseDir: null,
+    mirrorUrls: [],
     tried,
     error: 'No writable public/soundboard directory found.'
   };
