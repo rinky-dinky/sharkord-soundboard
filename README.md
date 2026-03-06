@@ -57,7 +57,7 @@ Keep this matching the uploaded JSON filename unless you intentionally changed i
 
 ## Playing sounds
 
-- Click the soundboard launcher button in the top-right bar (the custom speaker icon) to open the floating soundboard panel.
+- Click the soundboard launcher button in the top-right bar to open the floating soundboard panel.
 - Join a voice channel.
 - Click any sound button to play it in your active call.
 
