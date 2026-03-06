@@ -13,7 +13,7 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a quick-open
 
 1. Download the latest `sharkord-soundboard.zip` from the GitHub Releases page.
 2. Unzip it into your Sharkord plugins folder.
-3. Add the ffmpeg binary named `ffmpeg` into the plugin `bin/` directory.
+3. Download ffmpeg from [ffmpeg.org/download.html](https://ffmpeg.org/download.html), then add the binary named `ffmpeg` into the plugin `bin/` directory.
 4. From inside the `bin` directory, run `chmod +x ./ffmpeg` to make it executable.
 
 Expected layout:
