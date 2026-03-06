@@ -3,7 +3,6 @@ import { useCallback, useEffect, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
-const LOCAL_MIRROR_URL_KEY = 'sharkord-soundboard-mirror-url';
 const DEFAULT_MIRROR_URL = '/public/soundboard-sounds.json';
 
 const EMOJI_OPTIONS = [
@@ -129,7 +128,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const [emoji, setEmoji] = useState('🦈');
   const [sourceUrl, setSourceUrl] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [mirrorUrlInput, setMirrorUrlInput] = useState(DEFAULT_MIRROR_URL);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,8 +139,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
         if (Array.isArray(parsed)) setSounds(parsed);
       }
 
-      const rawMirrorUrl = localStorage.getItem(LOCAL_MIRROR_URL_KEY);
-      if (rawMirrorUrl) setMirrorUrlInput(rawMirrorUrl);
     } catch {}
   }, []);
 
@@ -150,22 +146,19 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     localStorage.setItem(LOCAL_SOUNDS_CACHE_KEY, JSON.stringify(sounds));
   }, [sounds]);
 
-  const syncFromMirror = useCallback(async (requestedUrl?: string) => {
-    const selectedMirrorUrl = resolveMirrorUrl(requestedUrl ?? mirrorUrlInput);
+  const syncFromMirror = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const nextSounds = await loadSoundsFromMirror(selectedMirrorUrl);
+      const nextSounds = await loadSoundsFromMirror(DEFAULT_MIRROR_URL);
       setSounds(nextSounds);
-      localStorage.setItem(LOCAL_MIRROR_URL_KEY, selectedMirrorUrl);
-      setMirrorUrlInput(selectedMirrorUrl);
     } catch (e) {
       setError(`Could not load shared sounds from mirror URL: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
     }
-  }, [mirrorUrlInput]);
+  }, []);
 
   useEffect(() => {
     syncFromMirror().catch(() => {});
@@ -211,7 +204,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       setSourceUrl('');
       setName('');
       setShowEmojiPicker(false);
-      setError('Sound added. Re-sync from mirror after server writes the updated JSON.');
+      setError('Sound added. Close and reopen the panel to refresh shared sounds.');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -246,26 +239,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       <p className="text-sm opacity-70">
         {currentVoiceChannelId ? 'Click a sound to play it in your active voice call.' : 'Join a voice call to play sounds.'}
       </p>
-
-      <div className="rounded border p-2 flex flex-col gap-2">
-        <p className="text-xs opacity-70">Shared sounds mirror URL</p>
-        <div className="flex gap-2 items-center">
-          <input
-            value={mirrorUrlInput}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMirrorUrlInput(e.target.value)}
-            placeholder="/public/your-uploaded-sounds.json"
-            className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1"
-          />
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => syncFromMirror()}
-            className="rounded border px-2 py-1 disabled:opacity-50"
-          >
-            Sync
-          </button>
-        </div>
-      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
         {sounds.map((sound) => (
