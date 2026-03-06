@@ -99,7 +99,7 @@ const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) 
   return `/${commandName} ${orderedArgValues.join(' ')}`;
 };
 
-const resolveDirectCommandExecutor = (ctx: TPluginSlotContext): TDirectExecuteCommand | null => {
+const resolveDirectCommandExecutors = (ctx: TPluginSlotContext): TDirectExecuteCommand[] => {
   const runtimeCtx = ctx as any;
   const sharkordGlobal = (window as any)?.sharkord;
 
@@ -119,23 +119,19 @@ const resolveDirectCommandExecutor = (ctx: TPluginSlotContext): TDirectExecuteCo
     sharkordGlobal?.plugins?.execute
   ];
 
-  const directCommandExecutor = candidates.find((candidate) => typeof candidate === 'function');
-  if (!directCommandExecutor) {
-    return null;
-  }
-
-  return async (commandName, args) => Promise.resolve(directCommandExecutor(commandName, args));
+  const uniqueExecutors = Array.from(new Set(candidates.filter((candidate) => typeof candidate === 'function')));
+  return uniqueExecutors.map((executor) => async (commandName, args) => Promise.resolve((executor as Function)(commandName, args)));
 };
 
-const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
+const getCommandExecutor = (ctx: TPluginSlotContext, directExecutors: TDirectExecuteCommand[]): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sendMessage = runtimeCtx?.sendMessage as ((channelId: number, content: string) => void) | undefined;
-  const directExecuteCommand = resolveDirectCommandExecutor(ctx);
+  const primaryDirectExecutor = directExecutors[0];
 
   return async (commandName, args) => {
-    if (directExecuteCommand) {
+    if (primaryDirectExecutor) {
       debugLog('command.execute.direct', { commandName });
-      return directExecuteCommand(commandName, args);
+      return primaryDirectExecutor(commandName, args);
     }
 
     const selectedChannelId = runtimeCtx?.selectedChannelId as number | undefined;
@@ -160,7 +156,8 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
 
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
-  const executeCommand = useMemo(() => getCommandExecutor(ctx), [ctx]);
+  const directExecutors = useMemo(() => resolveDirectCommandExecutors(ctx), [ctx]);
+  const executeCommand = useMemo(() => getCommandExecutor(ctx, directExecutors), [ctx, directExecutors]);
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
@@ -203,6 +200,16 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
     const loadAuthoritativeSounds = async () => {
       try {
+        for (const directExecutor of directExecutors) {
+          const response = await directExecutor('list_sounds');
+          const authoritativeSounds = extractSoundsFromCommandResponse(response);
+
+          if (Array.isArray(authoritativeSounds) && isMounted) {
+            setSounds(authoritativeSounds);
+            return;
+          }
+        }
+
         const response = await runCommandRef.current('list_sounds');
         const authoritativeSounds = extractSoundsFromCommandResponse(response);
 
