@@ -1,5 +1,4 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { createTRPCProxyClient, createWSClient, wsLink } from '@trpc/client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
@@ -18,6 +17,8 @@ const EMOJI_OPTIONS = [
 ];
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
+
+type TDirectExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 const debugLog = (event: string, details?: Record<string, unknown>) => {
   console.info('[soundboard][debug]', event, details || {});
@@ -38,11 +39,45 @@ const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) 
   return `/${commandName} ${orderedArgValues.join(' ')}`;
 };
 
+const resolveDirectCommandExecutor = (ctx: TPluginSlotContext): TDirectExecuteCommand | null => {
+  const runtimeCtx = ctx as any;
+  const sharkordGlobal = (window as any)?.sharkord;
+
+  const candidates = [
+    runtimeCtx?.executeCommand,
+    runtimeCtx?.executePluginCommand,
+    runtimeCtx?.invokePluginCommand,
+    runtimeCtx?.commands?.execute,
+    runtimeCtx?.commands?.executeCommand,
+    runtimeCtx?.plugins?.executeCommand,
+    runtimeCtx?.plugins?.execute,
+    sharkordGlobal?.executeCommand,
+    sharkordGlobal?.executePluginCommand,
+    sharkordGlobal?.commands?.execute,
+    sharkordGlobal?.commands?.executeCommand,
+    sharkordGlobal?.plugins?.executeCommand,
+    sharkordGlobal?.plugins?.execute
+  ];
+
+  const directCommandExecutor = candidates.find((candidate) => typeof candidate === 'function');
+  if (!directCommandExecutor) {
+    return null;
+  }
+
+  return async (commandName, args) => Promise.resolve(directCommandExecutor(commandName, args));
+};
+
 const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sendMessage = runtimeCtx?.sendMessage as ((channelId: number, content: string) => void) | undefined;
+  const directExecuteCommand = resolveDirectCommandExecutor(ctx);
 
   return async (commandName, args) => {
+    if (directExecuteCommand) {
+      debugLog('command.execute.direct', { commandName });
+      return directExecuteCommand(commandName, args);
+    }
+
     const selectedChannelId = runtimeCtx?.selectedChannelId as number | undefined;
 
     if (!sendMessage || !selectedChannelId) {
@@ -98,6 +133,28 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     [executeCommand]
   );
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAuthoritativeSounds = async () => {
+      try {
+        const response = await runCommand('list_sounds');
+        const authoritativeSounds = (response as { sounds?: TSoundEntry[] } | null)?.sounds;
+
+        if (Array.isArray(authoritativeSounds) && isMounted) {
+          setSounds(authoritativeSounds);
+        }
+      } catch (e) {
+        console.info('[soundboard] could not load authoritative sounds', e);
+      }
+    };
+
+    loadAuthoritativeSounds();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [runCommand]);
 
   const onUpload = useCallback(async () => {
     if (!sourceUrl.trim()) {
