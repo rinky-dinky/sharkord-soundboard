@@ -60,3 +60,9 @@ Keep this matching the uploaded JSON filename unless you intentionally changed i
 - Click the soundboard launcher button in the top-right bar (the custom speaker icon) to open the floating soundboard panel.
 - Join a voice channel.
 - Click any sound button to play it in your active call.
+
+## Note
+
+This is just a vibe-coded project, use at your own risk.
+
+Thank you [Diogo Martino](https://github.com/diogomartino) for the awesome project that is [Sharkord](https://github.com/Sharkord/sharkord)
