@@ -146,7 +146,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
       setSourceUrl('');
       setName('');
-      setError('Uploaded via command. Sound added to local panel list.');
+      setError('Sound added.');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -173,6 +173,10 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
   return (
     <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
+      <p className="text-sm opacity-70">
+        {currentVoiceChannelId ? 'Click a sound to play it in your active voice call.' : 'Join a voice call to play sounds.'}
+      </p>
+
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
         {sounds.map((sound) => (
           <button
@@ -187,7 +191,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       </div>
 
       <details className="border rounded-md p-2" open={false}>
-        <summary className="cursor-pointer select-none font-medium">Upload Sound</summary>
+        <summary className="cursor-pointer select-none font-medium">Add Sound</summary>
         <div className="mt-2 flex flex-col gap-2">
           <input
             value={name}
@@ -214,22 +218,10 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
             onClick={onUpload}
             className="rounded border px-2 py-1 disabled:opacity-50"
           >
-            Upload to Shared Soundboard
+            Add
           </button>
-          <p className="text-xs opacity-70">
-            Format: <code>/upload_sound "Sound Name" "🦈" "https://example.com/sound.mp3"</code>
-          </p>
         </div>
       </details>
-
-      <p className="text-xs opacity-70">
-        Command format: <code>/upload_sound "Sound Name" "🦈" "https://example.com/sound.mp3"</code>
-      </p>
-
-
-      <p className="text-sm text-yellow-500">
-        Command-only mode: actions are sent to the selected text channel. Upload/Play work; Refresh only triggers /list_sounds in chat.
-      </p>
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
     </div>
