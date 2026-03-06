@@ -262,18 +262,7 @@ const onLoad = async (ctx: PluginContext) => {
     }
   });
 
-  ctx.commands.register({
-    name: 'probe_public_write',
-    description: 'Check whether the plugin can write to /public/soundboard.',
-    args: [],
-    async executes() {
-      const { urls } = await getPublicSoundsMirrorPaths();
-      return {
-        ...publicWriteProbeResult,
-        mirrorUrls: urls
-      };
-    }
-  });
+
 
   ctx.commands.register({
     name: 'upload_sound',
