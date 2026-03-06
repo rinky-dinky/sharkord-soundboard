@@ -17,13 +17,7 @@ const EMOJI_OPTIONS = [
   '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️'
 ];
 
-const EMOJI_OPTIONS = [
-  '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️',
-  '🔥', '💥', '⚡', '✨', '⭐', '🌟', '🚀', '🎯',
-  '😂', '😎', '🥳', '😈', '🤖', '👀', '👏', '✅',
-  '💀', '👾', '🐺', '🐉', '🧠', '💎', '🕺', '💃',
-  '❤️', '💙', '💜', '🧡', '💚', '🤍', '🖤', '💛'
-];
+type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 const debugLog = (event: string, details?: Record<string, unknown>) => {
   console.info('[soundboard][debug]', event, details || {});
