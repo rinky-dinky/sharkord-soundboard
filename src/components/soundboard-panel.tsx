@@ -24,37 +24,64 @@ const debugLog = (event: string, details?: Record<string, unknown>) => {
   console.info('[soundboard][debug]', event, details || {});
 };
 
+const tryParseJsonString = (value: unknown): unknown => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
 const extractSoundsFromCommandResponse = (response: unknown): TSoundEntry[] | null => {
-  if (!response || typeof response !== 'object') {
-    return null;
-  }
+  const visited = new Set<unknown>();
 
-  const record = response as Record<string, unknown>;
-
-  const candidates: unknown[] = [
-    record.sounds,
-    (record.result as Record<string, unknown> | undefined)?.sounds,
-    (record.result as Record<string, unknown> | undefined)?.data,
-    (record.result as Record<string, unknown> | undefined)?.json,
-    (record.data as Record<string, unknown> | undefined)?.sounds,
-    (record.data as Record<string, unknown> | undefined)?.json,
-    (record.json as Record<string, unknown> | undefined)?.sounds
-  ];
-
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate)) {
-      return candidate as TSoundEntry[];
+  const search = (value: unknown, depth: number): TSoundEntry[] | null => {
+    if (depth > 6 || value === null || value === undefined) {
+      return null;
     }
 
-    if (candidate && typeof candidate === 'object') {
-      const nestedSounds = (candidate as Record<string, unknown>).sounds;
-      if (Array.isArray(nestedSounds)) {
-        return nestedSounds as TSoundEntry[];
+    const normalizedValue = tryParseJsonString(value);
+
+    if (Array.isArray(normalizedValue)) {
+      if (normalizedValue.every((entry) => entry && typeof entry === 'object' && 'id' in entry && 'name' in entry)) {
+        return normalizedValue as TSoundEntry[];
       }
-    }
-  }
 
-  return null;
+      for (const child of normalizedValue) {
+        const found = search(child, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    if (!normalizedValue || typeof normalizedValue !== 'object') {
+      return null;
+    }
+
+    if (visited.has(normalizedValue)) {
+      return null;
+    }
+    visited.add(normalizedValue);
+
+    const record = normalizedValue as Record<string, unknown>;
+
+    if (Array.isArray(record.sounds)) {
+      return record.sounds as TSoundEntry[];
+    }
+
+    for (const child of Object.values(record)) {
+      const found = search(child, depth + 1);
+      if (found) return found;
+    }
+
+    return null;
+  };
+
+  return search(response, 0);
 };
 
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
