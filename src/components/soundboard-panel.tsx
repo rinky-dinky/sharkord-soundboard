@@ -102,11 +102,75 @@ const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) 
   return `/${commandName} ${orderedArgValues.join(' ')}`;
 };
 
-const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
+const resolveDirectCommandCandidates = (ctx: TPluginSlotContext): TDirectCommandCandidate[] => {
+  const runtimeCtx = ctx as any;
+  const sharkordGlobal = (window as any)?.sharkord;
+
+  const candidates = [
+    runtimeCtx?.executeCommand,
+    runtimeCtx?.executePluginCommand,
+    runtimeCtx?.invokePluginCommand,
+    runtimeCtx?.invokeCommand,
+    runtimeCtx?.commands?.execute,
+    runtimeCtx?.commands?.executeCommand,
+    runtimeCtx?.commands?.invoke,
+    runtimeCtx?.plugins?.executeCommand,
+    runtimeCtx?.plugins?.execute,
+    runtimeCtx?.plugins?.invoke,
+    sharkordGlobal?.executeCommand,
+    sharkordGlobal?.executePluginCommand,
+    sharkordGlobal?.invokePluginCommand,
+    sharkordGlobal?.invokeCommand,
+    sharkordGlobal?.commands?.execute,
+    sharkordGlobal?.commands?.executeCommand,
+    sharkordGlobal?.commands?.invoke,
+    sharkordGlobal?.plugins?.executeCommand,
+    sharkordGlobal?.plugins?.execute,
+    sharkordGlobal?.plugins?.invoke
+  ];
+
+  return Array.from(new Set(candidates.filter((candidate) => typeof candidate === 'function')));
+};
+
+const callDirectCandidate = async (
+  candidate: TDirectCommandCandidate,
+  commandName: string,
+  args?: Record<string, unknown>
+): Promise<unknown> => {
+  const payloadArgs = args ?? {};
+  const attempts: unknown[][] = [
+    [commandName, args],
+    [{ commandName, args: payloadArgs }],
+    [{ name: commandName, args: payloadArgs }],
+    [{ command: commandName, args: payloadArgs }]
+  ];
+
+  for (const attemptArgs of attempts) {
+    try {
+      return await Promise.resolve(candidate(...attemptArgs));
+    } catch {
+      // try next signature
+    }
+  }
+
+  return undefined;
+};
+
+const wrapDirectCandidates = (candidates: TDirectCommandCandidate[]): TDirectExecuteCommand[] => {
+  return candidates.map((candidate) => async (commandName, args) => callDirectCandidate(candidate, commandName, args));
+};
+
+const getCommandExecutor = (ctx: TPluginSlotContext, directExecutors: TDirectExecuteCommand[]): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sendMessage = runtimeCtx?.sendMessage as ((channelId: number, content: string) => void) | undefined;
+  const primaryDirectExecutor = directExecutors[0];
 
   return async (commandName, args) => {
+    if (primaryDirectExecutor) {
+      debugLog('command.execute.direct', { commandName });
+      return primaryDirectExecutor(commandName, args);
+    }
+
     const selectedChannelId = runtimeCtx?.selectedChannelId as number | undefined;
 
     if (!sendMessage || !selectedChannelId) {
