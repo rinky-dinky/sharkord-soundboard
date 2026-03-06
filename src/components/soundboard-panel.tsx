@@ -19,6 +19,7 @@ const EMOJI_OPTIONS = [
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
+type TDirectCommandCandidate = (...args: unknown[]) => unknown;
 type TDirectExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 const debugLog = (event: string, details?: Record<string, unknown>) => {
@@ -125,7 +126,7 @@ const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) 
   return `/${commandName} ${orderedArgValues.join(' ')}`;
 };
 
-const resolveDirectCommandExecutors = (ctx: TPluginSlotContext): TDirectExecuteCommand[] => {
+const resolveDirectCommandCandidates = (ctx: TPluginSlotContext): TDirectCommandCandidate[] => {
   const runtimeCtx = ctx as any;
   const sharkordGlobal = (window as any)?.sharkord;
 
@@ -133,20 +134,54 @@ const resolveDirectCommandExecutors = (ctx: TPluginSlotContext): TDirectExecuteC
     runtimeCtx?.executeCommand,
     runtimeCtx?.executePluginCommand,
     runtimeCtx?.invokePluginCommand,
+    runtimeCtx?.invokeCommand,
     runtimeCtx?.commands?.execute,
     runtimeCtx?.commands?.executeCommand,
+    runtimeCtx?.commands?.invoke,
     runtimeCtx?.plugins?.executeCommand,
     runtimeCtx?.plugins?.execute,
+    runtimeCtx?.plugins?.invoke,
     sharkordGlobal?.executeCommand,
     sharkordGlobal?.executePluginCommand,
+    sharkordGlobal?.invokePluginCommand,
+    sharkordGlobal?.invokeCommand,
     sharkordGlobal?.commands?.execute,
     sharkordGlobal?.commands?.executeCommand,
+    sharkordGlobal?.commands?.invoke,
     sharkordGlobal?.plugins?.executeCommand,
-    sharkordGlobal?.plugins?.execute
+    sharkordGlobal?.plugins?.execute,
+    sharkordGlobal?.plugins?.invoke
   ];
 
-  const uniqueExecutors = Array.from(new Set(candidates.filter((candidate) => typeof candidate === 'function')));
-  return uniqueExecutors.map((executor) => async (commandName, args) => Promise.resolve((executor as Function)(commandName, args)));
+  return Array.from(new Set(candidates.filter((candidate) => typeof candidate === 'function')));
+};
+
+const callDirectCandidate = async (
+  candidate: TDirectCommandCandidate,
+  commandName: string,
+  args?: Record<string, unknown>
+): Promise<unknown> => {
+  const payloadArgs = args ?? {};
+  const attempts: unknown[][] = [
+    [commandName, args],
+    [{ commandName, args: payloadArgs }],
+    [{ name: commandName, args: payloadArgs }],
+    [{ command: commandName, args: payloadArgs }]
+  ];
+
+  for (const attemptArgs of attempts) {
+    try {
+      return await Promise.resolve(candidate(...attemptArgs));
+    } catch {
+      // try next signature
+    }
+  }
+
+  return undefined;
+};
+
+const wrapDirectCandidates = (candidates: TDirectCommandCandidate[]): TDirectExecuteCommand[] => {
+  return candidates.map((candidate) => async (commandName, args) => callDirectCandidate(candidate, commandName, args));
 };
 
 const getCommandExecutor = (ctx: TPluginSlotContext, directExecutors: TDirectExecuteCommand[]): TExecuteCommand => {
@@ -182,7 +217,8 @@ const getCommandExecutor = (ctx: TPluginSlotContext, directExecutors: TDirectExe
 
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
-  const directExecutors = useMemo(() => resolveDirectCommandExecutors(ctx), [ctx]);
+  const directCandidates = useMemo(() => resolveDirectCommandCandidates(ctx), [ctx]);
+  const directExecutors = useMemo(() => wrapDirectCandidates(directCandidates), [directCandidates]);
   const executeCommand = useMemo(() => getCommandExecutor(ctx, directExecutors), [ctx, directExecutors]);
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
@@ -236,6 +272,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
           if (!hasRunDebugPass) {
             console.info('[soundboard][debug] list_sounds direct executor response', {
               executorIndex: index,
+              executorCount: directExecutors.length,
               summary: summarizeResponseForDebug(response),
               raw: response
             });
