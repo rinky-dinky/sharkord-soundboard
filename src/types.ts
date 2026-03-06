@@ -3,7 +3,8 @@ export type TSoundEntry = {
   name: string;
   emoji: string;
   mimeType: string;
-  dataBase64: string;
+  sourceUrl?: string;
+  dataBase64?: string;
   createdByUserId: number;
   createdAt: number;
 };
