@@ -8,6 +8,7 @@ import { type TListSoundsResponse, type TSoundEntry } from './types';
 
 const SOUNDS_SETTINGS_KEY = 'soundsJson';
 const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 2;
+const RTP_AUDIO_PAYLOAD_TYPE = 111;
 
 const getFfmpegBinaryPath = (pluginPath: string) => {
   const binaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
@@ -214,13 +215,15 @@ const onLoad = async (ctx: PluginContext) => {
         enableSrtp: false
       });
 
+      const audioSsrc = Math.floor(Math.random() * 1_000_000_000);
+
       const producer = await transport.produce({
         kind: 'audio',
         rtpParameters: {
           codecs: [
             {
               mimeType: 'audio/opus',
-              payloadType: 111,
+              payloadType: RTP_AUDIO_PAYLOAD_TYPE,
               clockRate: 48000,
               channels: 2,
               parameters: {
@@ -230,7 +233,7 @@ const onLoad = async (ctx: PluginContext) => {
               rtcpFeedback: []
             }
           ],
-          encodings: [{ ssrc: 22222222 }]
+          encodings: [{ ssrc: audioSsrc }]
         }
       });
 
@@ -277,6 +280,12 @@ const onLoad = async (ctx: PluginContext) => {
         '48000',
         '-c:a',
         'libopus',
+        '-application',
+        'audio',
+        '-payload_type',
+        `${RTP_AUDIO_PAYLOAD_TYPE}`,
+        '-ssrc',
+        `${audioSsrc}`,
         '-f',
         'rtp',
         `rtp://${ip}:${transport.tuple.localPort}?pkt_size=1200`
