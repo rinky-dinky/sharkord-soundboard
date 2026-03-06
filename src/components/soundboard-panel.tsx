@@ -1,9 +1,10 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { createTRPCProxyClient, createWSClient, wsLink } from '@trpc/client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
+const LOCAL_MIRROR_URL_KEY = 'sharkord-soundboard-mirror-url';
+const DEFAULT_MIRROR_URL = '/public/soundboard-sounds.json';
 
 const EMOJI_OPTIONS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
@@ -19,8 +20,71 @@ const EMOJI_OPTIONS = [
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
-const debugLog = (event: string, details?: Record<string, unknown>) => {
-  console.info('[soundboard][debug]', event, details || {});
+const tryParseJsonString = (value: unknown): unknown => {
+  if (typeof value !== 'string') return value;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    try {
+      return JSON.parse(decodeURIComponent(value));
+    } catch {
+      return value;
+    }
+  }
+};
+
+const extractSounds = (value: unknown): TSoundEntry[] | null => {
+  const parsed = tryParseJsonString(value);
+
+  if (Array.isArray(parsed)) {
+    return parsed as TSoundEntry[];
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+
+  if (Array.isArray(record.sounds)) {
+    return record.sounds as TSoundEntry[];
+  }
+
+  for (const child of Object.values(record)) {
+    const found = extractSounds(child);
+    if (found) return found;
+  }
+
+  return null;
+};
+
+const resolveMirrorUrl = (rawUrl: string) => {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return DEFAULT_MIRROR_URL;
+
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/')) return trimmed;
+  return `/${trimmed}`;
+};
+
+const loadSoundsFromMirror = async (mirrorUrl: string): Promise<TSoundEntry[]> => {
+  const resolvedUrl = resolveMirrorUrl(mirrorUrl);
+  const cacheBust = resolvedUrl.includes('?') ? '&' : '?';
+  const response = await fetch(`${resolvedUrl}${cacheBust}t=${Date.now()}`, { cache: 'no-store' });
+
+  if (!response.ok) {
+    throw new Error(`Mirror URL returned ${response.status} ${response.statusText}`);
+  }
+
+  const payload = await response.json();
+  const sounds = extractSounds(payload);
+
+  if (!Array.isArray(sounds)) {
+    throw new Error('Mirror URL returned an invalid sounds payload.');
+  }
+
+  return sounds;
 };
 
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
@@ -50,63 +114,35 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
     }
 
     const commandText = buildSlashCommand(commandName, args);
-    debugLog('command.execute.sendMessage', {
-      commandName,
-      selectedChannelId,
-      commandLength: commandText.length
-    });
-
     await Promise.resolve(sendMessage(selectedChannelId, commandText));
-
-    if (commandName === 'list_sounds') {
-      return { sounds: [] };
-    }
 
     return { queued: true };
   };
 };
 
-
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
   const executeCommand = useMemo(() => getCommandExecutor(ctx), [ctx]);
-  const bridgeAvailable = useMemo(() => {
-    const runtimeCtx = ctx as any;
-    const sharkordGlobal = (window as any)?.sharkord;
-
-    const candidates = [
-      runtimeCtx?.executeCommand,
-      runtimeCtx?.executePluginCommand,
-      runtimeCtx?.invokePluginCommand,
-      runtimeCtx?.commands?.execute,
-      runtimeCtx?.commands?.executeCommand,
-      runtimeCtx?.plugins?.executeCommand,
-      runtimeCtx?.plugins?.execute,
-      sharkordGlobal?.executeCommand,
-      sharkordGlobal?.executePluginCommand,
-      sharkordGlobal?.commands?.execute,
-      sharkordGlobal?.commands?.executeCommand,
-      sharkordGlobal?.plugins?.executeCommand,
-      sharkordGlobal?.plugins?.execute
-    ];
-
-    return candidates.some((candidate) => typeof candidate === 'function');
-  }, [ctx]);
 
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
   const [sourceUrl, setSourceUrl] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [mirrorUrlInput, setMirrorUrlInput] = useState(DEFAULT_MIRROR_URL);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(LOCAL_SOUNDS_CACHE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as TSoundEntry[];
-      if (Array.isArray(parsed)) setSounds(parsed);
+      const rawSounds = localStorage.getItem(LOCAL_SOUNDS_CACHE_KEY);
+      if (rawSounds) {
+        const parsed = JSON.parse(rawSounds) as TSoundEntry[];
+        if (Array.isArray(parsed)) setSounds(parsed);
+      }
+
+      const rawMirrorUrl = localStorage.getItem(LOCAL_MIRROR_URL_KEY);
+      if (rawMirrorUrl) setMirrorUrlInput(rawMirrorUrl);
     } catch {}
   }, []);
 
@@ -114,9 +150,26 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     localStorage.setItem(LOCAL_SOUNDS_CACHE_KEY, JSON.stringify(sounds));
   }, [sounds]);
 
+  const syncFromMirror = useCallback(async (requestedUrl?: string) => {
+    const selectedMirrorUrl = resolveMirrorUrl(requestedUrl ?? mirrorUrlInput);
+    setLoading(true);
+    setError(null);
+
+    try {
+      const nextSounds = await loadSoundsFromMirror(selectedMirrorUrl);
+      setSounds(nextSounds);
+      localStorage.setItem(LOCAL_MIRROR_URL_KEY, selectedMirrorUrl);
+      setMirrorUrlInput(selectedMirrorUrl);
+    } catch (e) {
+      setError(`Could not load shared sounds from mirror URL: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [mirrorUrlInput]);
+
   useEffect(() => {
-    console.info('[soundboard] panel mounted', { currentVoiceChannelId });
-  }, [currentVoiceChannelId]);
+    syncFromMirror().catch(() => {});
+  }, [syncFromMirror]);
 
   const runCommand = useCallback(
     async (commandName: string, args?: Record<string, unknown>) => {
@@ -124,7 +177,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     },
     [executeCommand]
   );
-
 
   const onUpload = useCallback(async () => {
     if (!sourceUrl.trim()) {
@@ -136,7 +188,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     setError(null);
 
     try {
-      console.info('[soundboard] uploading sound from URL', { name, emoji, sourceUrl });
       const soundId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       await runCommand('upload_sound', {
@@ -160,7 +211,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       setSourceUrl('');
       setName('');
       setShowEmojiPicker(false);
-      setError('Sound added.');
+      setError('Sound added. Re-sync from mirror after server writes the updated JSON.');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -170,26 +221,51 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
   const onPlay = useCallback(
     async (soundId: string) => {
-      console.info('[soundboard] playing sound', { soundId, currentVoiceChannelId });
       setLoading(true);
       setError(null);
       try {
         await runCommand('play_sound', { soundId });
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        const message = e instanceof Error ? e.message : String(e);
+
+        if (/sound not found/i.test(message)) {
+          setSounds((prev) => prev.filter((entry) => entry.id !== soundId));
+          setError('That sound no longer exists and was removed from your local list.');
+        } else {
+          setError(message);
+        }
       } finally {
         setLoading(false);
       }
     },
-    [currentVoiceChannelId, runCommand]
+    [runCommand]
   );
-
 
   return (
     <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
       <p className="text-sm opacity-70">
         {currentVoiceChannelId ? 'Click a sound to play it in your active voice call.' : 'Join a voice call to play sounds.'}
       </p>
+
+      <div className="rounded border p-2 flex flex-col gap-2">
+        <p className="text-xs opacity-70">Shared sounds mirror URL</p>
+        <div className="flex gap-2 items-center">
+          <input
+            value={mirrorUrlInput}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMirrorUrlInput(e.target.value)}
+            placeholder="/public/your-uploaded-sounds.json"
+            className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1"
+          />
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => syncFromMirror()}
+            className="rounded border px-2 py-1 disabled:opacity-50"
+          >
+            Sync
+          </button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
         {sounds.map((sound) => (
@@ -216,7 +292,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
             />
             <button
               type="button"
-              className="inline-flex h-11 min-h-11 w-11 min-w-11 shrink-0 items-center justify-center rounded border p-0 text-2xl leading-none hover:bg-accent"
+              className="inline-flex h-9 min-h-9 w-9 min-w-9 shrink-0 items-center justify-center rounded border p-0 text-xl leading-none hover:bg-accent"
               onClick={() => setShowEmojiPicker((v) => !v)}
               title="Pick emoji"
               aria-label="Pick emoji"
