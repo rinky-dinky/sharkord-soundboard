@@ -58,10 +58,6 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
 
     await Promise.resolve(sendMessage(selectedChannelId, commandText));
 
-    if (commandName === 'list_sounds') {
-      return { sounds: [] };
-    }
-
     return { queued: true };
   };
 };
@@ -70,29 +66,6 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
   const executeCommand = useMemo(() => getCommandExecutor(ctx), [ctx]);
-  const bridgeAvailable = useMemo(() => {
-    const runtimeCtx = ctx as any;
-    const sharkordGlobal = (window as any)?.sharkord;
-
-    const candidates = [
-      runtimeCtx?.executeCommand,
-      runtimeCtx?.executePluginCommand,
-      runtimeCtx?.invokePluginCommand,
-      runtimeCtx?.commands?.execute,
-      runtimeCtx?.commands?.executeCommand,
-      runtimeCtx?.plugins?.executeCommand,
-      runtimeCtx?.plugins?.execute,
-      sharkordGlobal?.executeCommand,
-      sharkordGlobal?.executePluginCommand,
-      sharkordGlobal?.commands?.execute,
-      sharkordGlobal?.commands?.executeCommand,
-      sharkordGlobal?.plugins?.executeCommand,
-      sharkordGlobal?.plugins?.execute
-    ];
-
-    return candidates.some((candidate) => typeof candidate === 'function');
-  }, [ctx]);
-
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
@@ -176,7 +149,14 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       try {
         await runCommand('play_sound', { soundId });
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        const message = e instanceof Error ? e.message : String(e);
+
+        if (/sound not found/i.test(message)) {
+          setSounds((prev) => prev.filter((entry) => entry.id !== soundId));
+          setError('That sound no longer exists and was removed from your local list.');
+        } else {
+          setError(message);
+        }
       } finally {
         setLoading(false);
       }
@@ -216,7 +196,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
             />
             <button
               type="button"
-              className="inline-flex h-11 min-h-11 w-11 min-w-11 shrink-0 items-center justify-center rounded border p-0 text-2xl leading-none hover:bg-accent"
+              className="inline-flex h-9 min-h-9 w-9 min-w-9 shrink-0 items-center justify-center rounded border p-0 text-xl leading-none hover:bg-accent"
               onClick={() => setShowEmojiPicker((v) => !v)}
               title="Pick emoji"
               aria-label="Pick emoji"
