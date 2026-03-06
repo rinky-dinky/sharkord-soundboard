@@ -1,9 +1,10 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
 const COMMAND_RESPONSE_TIMEOUT_MS = 6000;
+const PUBLIC_SOUNDS_JSON_URL = '/public/soundboard/sounds.json';
 
 const EMOJI_OPTIONS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
@@ -116,6 +117,19 @@ const waitForCommandResponse = (commandName: string, timeoutMs: number): Promise
   });
 };
 
+const fetchPublicSoundsJson = async (): Promise<TSoundEntry[] | null> => {
+  try {
+    const response = await fetch(`${PUBLIC_SOUNDS_JSON_URL}?t=${Date.now()}`, { cache: 'no-store' });
+    if (!response.ok) return null;
+
+    const payload = await response.json();
+    const sounds = extractSounds(payload);
+    return Array.isArray(sounds) ? sounds : null;
+  } catch {
+    return null;
+  }
+};
+
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) => {
@@ -158,6 +172,7 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
   const executeCommand = useMemo(() => getCommandExecutor(ctx), [ctx]);
+  const executeCommandRef = useRef(executeCommand);
 
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
@@ -181,10 +196,21 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   }, [sounds]);
 
   useEffect(() => {
+    executeCommandRef.current = executeCommand;
+  }, [executeCommand]);
+
+  useEffect(() => {
     let mounted = true;
 
     const syncFromAuthoritativeJson = async () => {
-      await executeCommand('list_sounds');
+      const publicSounds = await fetchPublicSoundsJson();
+      if (Array.isArray(publicSounds)) {
+        debugLog('public_sounds_json.loaded', { count: publicSounds.length, url: PUBLIC_SOUNDS_JSON_URL });
+        if (mounted) setSounds(publicSounds);
+        return;
+      }
+
+      await executeCommandRef.current('list_sounds');
       const responsePayload = await waitForCommandResponse('list_sounds', COMMAND_RESPONSE_TIMEOUT_MS);
       const serverSounds = extractSounds(responsePayload);
 
@@ -199,13 +225,13 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     };
 
     syncFromAuthoritativeJson().catch((e) => {
-      console.info('[soundboard] could not sync sounds from command response', e);
+      console.info('[soundboard] could not sync sounds from public json or command response', e instanceof Error ? e.message : String(e));
     });
 
     return () => {
       mounted = false;
     };
-  }, [executeCommand]);
+  }, []);
 
   const runCommand = useCallback(
     async (commandName: string, args?: Record<string, unknown>) => {
