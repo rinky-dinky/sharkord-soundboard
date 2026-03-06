@@ -3,7 +3,6 @@ import { createTRPCProxyClient, createWSClient, wsLink } from '@trpc/client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
-const getPluginId = () => 'sharkord-soundboard';
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -11,33 +10,6 @@ type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => 
 const debugLog = (event: string, details?: Record<string, unknown>) => {
   console.info('[soundboard][debug]', event, details || {});
 };
-
-const unwrapCommandResponse = <T,>(response: unknown): T => {
-  if (response && typeof response === 'object') {
-    const envelope = response as Record<string, unknown>;
-
-    if (envelope.error) {
-      const errorMessage =
-        typeof envelope.error === 'string'
-          ? envelope.error
-          : (envelope.error as any)?.message;
-      throw new Error(errorMessage || 'Command failed.');
-    }
-
-    if ('result' in envelope) {
-      return envelope.result as T;
-    }
-
-    if ('data' in envelope) {
-      return envelope.data as T;
-    }
-  }
-
-  return response as T;
-};
-
-
-
 
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
@@ -140,22 +112,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     [executeCommand]
   );
 
-  const refresh = useCallback(async () => {
-    console.info('[soundboard] refreshing sounds list');
-
-    setLoading(true);
-    setError(null);
-    try {
-      await runCommand('list_sounds');
-      setError('Sent /list_sounds to the selected channel. Panel list uses local cache in command-only mode.');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [runCommand]);
-
-
 
   const onUpload = useCallback(async () => {
     if (!sourceUrl.trim()) {
@@ -217,14 +173,6 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
   return (
     <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
-      <h2 className="text-xl font-semibold">Sharkord Soundboard</h2>
-
-      <p className="text-sm opacity-70">
-        {currentVoiceChannelId
-          ? 'Click a sound to play it in your active voice call.'
-          : 'Join a voice channel to play sounds.'}
-      </p>
-
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
         {sounds.map((sound) => (
           <button
@@ -238,47 +186,41 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
         ))}
       </div>
 
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className="rounded border px-2 py-1 disabled:opacity-50"
-          disabled={loading}
-          onClick={refresh}
-        >
-          Refresh
-        </button>
-      </div>
-
-      <div className="border rounded-md p-3 flex flex-col gap-2">
-        <h3 className="font-medium">Upload Sound</h3>
-        <input
-          value={name}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
-          placeholder="Sound name"
-          className="rounded border bg-transparent px-2 py-1"
-        />
-        <input
-          value={emoji}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmoji(e.target.value)}
-          placeholder="Emoji"
-          maxLength={8}
-          className="rounded border bg-transparent px-2 py-1"
-        />
-        <input
-          value={sourceUrl}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSourceUrl(e.target.value)}
-          placeholder="Direct file URL (https://...)"
-          className="rounded border bg-transparent px-2 py-1"
-        />
-        <button
-          type="button"
-          disabled={!sourceUrl || !name || !emoji || loading}
-          onClick={onUpload}
-          className="rounded border px-2 py-1 disabled:opacity-50"
-        >
-          Upload to Shared Soundboard
-        </button>
-      </div>
+      <details className="border rounded-md p-2" open={false}>
+        <summary className="cursor-pointer select-none font-medium">Upload Sound</summary>
+        <div className="mt-2 flex flex-col gap-2">
+          <input
+            value={name}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
+            placeholder="Sound name"
+            className="rounded border bg-transparent px-2 py-1"
+          />
+          <input
+            value={emoji}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmoji(e.target.value)}
+            placeholder="Emoji"
+            maxLength={8}
+            className="rounded border bg-transparent px-2 py-1"
+          />
+          <input
+            value={sourceUrl}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSourceUrl(e.target.value)}
+            placeholder="Direct file URL (https://...)"
+            className="rounded border bg-transparent px-2 py-1"
+          />
+          <button
+            type="button"
+            disabled={!sourceUrl || !name || !emoji || loading}
+            onClick={onUpload}
+            className="rounded border px-2 py-1 disabled:opacity-50"
+          >
+            Upload to Shared Soundboard
+          </button>
+          <p className="text-xs opacity-70">
+            Format: <code>/upload_sound "Sound Name" "🦈" "https://example.com/sound.mp3"</code>
+          </p>
+        </div>
+      </details>
 
       <p className="text-xs opacity-70">
         Command format: <code>/upload_sound "Sound Name" "🦈" "https://example.com/sound.mp3"</code>
