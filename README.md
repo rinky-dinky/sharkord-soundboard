@@ -4,7 +4,7 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a quick-open
 
 ## Features
 
-- Quick-open soundboard button in the top-right plugin slot that opens a floating panel near voice controls.
+- Quick-open soundboard button in the top-right plugin slot that opens a floating panel.
 - Click-to-play sounds in the user's currently active voice channel.
 - Upload form for audio file URL + display name + emoji.
 - Shared sounds are persisted in plugin settings and mirrored to a public JSON URL for client sync.
