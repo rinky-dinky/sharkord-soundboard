@@ -61,7 +61,7 @@ Keep this matching the uploaded JSON filename unless you intentionally changed i
 - Join a voice channel.
 - Click any sound button to play it in your active call.
 
-## Note
+## ⚠️ Note ⚠️
 
 This is just a vibe-coded project, use at your own risk.
 
