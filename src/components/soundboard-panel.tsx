@@ -24,6 +24,39 @@ const debugLog = (event: string, details?: Record<string, unknown>) => {
   console.info('[soundboard][debug]', event, details || {});
 };
 
+const extractSoundsFromCommandResponse = (response: unknown): TSoundEntry[] | null => {
+  if (!response || typeof response !== 'object') {
+    return null;
+  }
+
+  const record = response as Record<string, unknown>;
+
+  const candidates: unknown[] = [
+    record.sounds,
+    (record.result as Record<string, unknown> | undefined)?.sounds,
+    (record.result as Record<string, unknown> | undefined)?.data,
+    (record.result as Record<string, unknown> | undefined)?.json,
+    (record.data as Record<string, unknown> | undefined)?.sounds,
+    (record.data as Record<string, unknown> | undefined)?.json,
+    (record.json as Record<string, unknown> | undefined)?.sounds
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate as TSoundEntry[];
+    }
+
+    if (candidate && typeof candidate === 'object') {
+      const nestedSounds = (candidate as Record<string, unknown>).sounds;
+      if (Array.isArray(nestedSounds)) {
+        return nestedSounds as TSoundEntry[];
+      }
+    }
+  }
+
+  return null;
+};
+
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) => {
@@ -144,11 +177,14 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
     const loadAuthoritativeSounds = async () => {
       try {
         const response = await runCommandRef.current('list_sounds');
-        const authoritativeSounds = (response as { sounds?: TSoundEntry[] } | null)?.sounds;
+        const authoritativeSounds = extractSoundsFromCommandResponse(response);
 
         if (Array.isArray(authoritativeSounds) && isMounted) {
           setSounds(authoritativeSounds);
+          return;
         }
+
+        console.info('[soundboard] list_sounds returned no usable sounds payload', response);
       } catch (e) {
         console.info('[soundboard] could not load authoritative sounds', e);
       }
