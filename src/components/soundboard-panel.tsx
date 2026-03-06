@@ -5,7 +5,13 @@ import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
 
-const EMOJI_OPTIONS = ['🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️', '🔥', '💥', '😂', '😎', '🥳', '👏', '✅', '⭐', '💀', '👀', '🚀', '❤️'];
+const EMOJI_OPTIONS = [
+  '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️',
+  '🔥', '💥', '⚡', '✨', '⭐', '🌟', '🚀', '🎯',
+  '😂', '😎', '🥳', '😈', '🤖', '👀', '👏', '✅',
+  '💀', '👾', '🐺', '🐉', '🧠', '💎', '🕺', '💃',
+  '❤️', '💙', '💜', '🧡', '💚', '🤍', '🖤', '💛'
+];
 
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -206,7 +212,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
             />
             <button
               type="button"
-              className="h-9 w-9 shrink-0 rounded border text-lg hover:bg-accent"
+              className="h-11 w-11 shrink-0 rounded border text-2xl leading-none hover:bg-accent"
               onClick={() => setShowEmojiPicker((v) => !v)}
               title="Pick emoji"
               aria-label="Pick emoji"
@@ -216,7 +222,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
             </button>
           </div>
           {showEmojiPicker ? (
-            <div className="grid grid-cols-10 gap-1 rounded border p-2">
+            <div className="grid grid-cols-8 gap-1 rounded border p-2">
               {EMOJI_OPTIONS.map((candidate) => (
                 <button
                   key={candidate}

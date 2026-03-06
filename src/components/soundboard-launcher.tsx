@@ -86,11 +86,11 @@ const SoundboardLauncher = (ctx: TPluginSlotContext) => {
         type="button"
         onClick={() => setOpen((v) => !v)}
         title="Open Soundboard"
-        className="h-8 rounded px-2 text-sm hover:bg-accent"
+        className="flex h-8 w-8 items-center justify-center rounded p-0 text-sm leading-none hover:bg-accent"
         aria-expanded={open}
         aria-haspopup="dialog"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="block">
           <rect x="3" y="3" width="18" height="18" rx="4" stroke="currentColor" strokeWidth="2" />
           <rect x="7" y="11" width="2" height="2" rx="1" fill="currentColor" />
           <rect x="10" y="9" width="2" height="6" rx="1" fill="currentColor" />
