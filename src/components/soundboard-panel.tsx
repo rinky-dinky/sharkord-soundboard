@@ -5,6 +5,8 @@ import type { TSoundEntry } from '../types';
 
 const LOCAL_SOUNDS_CACHE_KEY = 'sharkord-soundboard-local-sounds';
 
+const EMOJI_OPTIONS = ['🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️', '🔥', '💥', '😂', '😎', '🥳', '👏', '✅', '⭐', '💀', '👀', '🚀', '❤️'];
+
 type TExecuteCommand = (commandName: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 const debugLog = (event: string, details?: Record<string, unknown>) => {
@@ -85,6 +87,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
   const [sourceUrl, setSourceUrl] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -146,6 +149,7 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
 
       setSourceUrl('');
       setName('');
+      setShowEmojiPicker(false);
       setError('Sound added.');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -193,19 +197,41 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
       <details className="border rounded-md p-2" open={false}>
         <summary className="cursor-pointer select-none font-medium">Add Sound</summary>
         <div className="mt-2 flex flex-col gap-2">
-          <input
-            value={name}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
-            placeholder="Sound name"
-            className="rounded border bg-transparent px-2 py-1"
-          />
-          <input
-            value={emoji}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmoji(e.target.value)}
-            placeholder="Emoji"
-            maxLength={8}
-            className="rounded border bg-transparent px-2 py-1"
-          />
+          <div className="flex gap-2 items-center">
+            <input
+              value={name}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
+              placeholder="Sound name"
+              className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1"
+            />
+            <button
+              type="button"
+              className="h-9 w-9 shrink-0 rounded border text-lg hover:bg-accent"
+              onClick={() => setShowEmojiPicker((v) => !v)}
+              title="Pick emoji"
+              aria-label="Pick emoji"
+              aria-expanded={showEmojiPicker}
+            >
+              {emoji || '😀'}
+            </button>
+          </div>
+          {showEmojiPicker ? (
+            <div className="grid grid-cols-10 gap-1 rounded border p-2">
+              {EMOJI_OPTIONS.map((candidate) => (
+                <button
+                  key={candidate}
+                  type="button"
+                  className={`rounded px-1 py-1 text-lg hover:bg-accent ${emoji === candidate ? 'bg-accent' : ''}`}
+                  onClick={() => {
+                    setEmoji(candidate);
+                    setShowEmojiPicker(false);
+                  }}
+                >
+                  {candidate}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <input
             value={sourceUrl}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSourceUrl(e.target.value)}
