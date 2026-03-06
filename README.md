@@ -35,7 +35,7 @@ If ffmpeg is missing or not executable, the plugin will fail to load.
 The soundboard UI reads shared sounds from a public JSON mirror file.
 
 1. Download the blank `soundboard-sounds.json` file from this plugin's GitHub release assets.
-2. In Sharkord, attach `soundboard-sounds.json` to a message in any text channel.
+2. In Sharkord, attach `soundboard-sounds.json` to a message in any text channel, then send the message.
 
 ### Optional plugin setting
 
@@ -58,6 +58,6 @@ To add a sound from Sharkord:
 
 ## Playing sounds
 
-- Click the 🔊 button in the top-right bar to open the floating soundboard panel.
+- Click the soundboard launcher button in the top-right bar (the custom speaker icon) to open the floating soundboard panel.
 - Join a voice channel.
 - Click any sound button to play it in your active call.
