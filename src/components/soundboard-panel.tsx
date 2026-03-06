@@ -87,6 +87,91 @@ const loadSoundsFromMirror = async (mirrorUrl: string): Promise<TSoundEntry[]> =
   return sounds;
 };
 
+
+const summarizeResponseForDebug = (response: unknown): Record<string, unknown> => {
+  const parsed = tryParseJsonString(response);
+
+  if (Array.isArray(parsed)) {
+    return {
+      type: 'array',
+      length: parsed.length,
+      firstItemType: parsed.length > 0 ? typeof parsed[0] : 'empty'
+    };
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return { type: typeof parsed, value: parsed };
+  }
+
+  const record = parsed as Record<string, unknown>;
+  return {
+    type: 'object',
+    keys: Object.keys(record),
+    soundsIsArray: Array.isArray(record.sounds),
+    soundsLength: Array.isArray(record.sounds) ? record.sounds.length : undefined
+  };
+};
+
+const tryParseJsonString = (value: unknown): unknown => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+const extractSoundsFromCommandResponse = (response: unknown): TSoundEntry[] | null => {
+  const visited = new Set<unknown>();
+
+  const search = (value: unknown, depth: number): TSoundEntry[] | null => {
+    if (depth > 6 || value === null || value === undefined) {
+      return null;
+    }
+
+    const normalizedValue = tryParseJsonString(value);
+
+    if (Array.isArray(normalizedValue)) {
+      if (normalizedValue.every((entry) => entry && typeof entry === 'object' && 'id' in entry && 'name' in entry)) {
+        return normalizedValue as TSoundEntry[];
+      }
+
+      for (const child of normalizedValue) {
+        const found = search(child, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    if (!normalizedValue || typeof normalizedValue !== 'object') {
+      return null;
+    }
+
+    if (visited.has(normalizedValue)) {
+      return null;
+    }
+    visited.add(normalizedValue);
+
+    const record = normalizedValue as Record<string, unknown>;
+
+    if (Array.isArray(record.sounds)) {
+      return record.sounds as TSoundEntry[];
+    }
+
+    for (const child of Object.values(record)) {
+      const found = search(child, depth + 1);
+      if (found) return found;
+    }
+
+    return null;
+  };
+
+  return search(response, 0);
+};
+
 const escapeArg = (value: string) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) => {
@@ -102,11 +187,75 @@ const buildSlashCommand = (commandName: string, args?: Record<string, unknown>) 
   return `/${commandName} ${orderedArgValues.join(' ')}`;
 };
 
-const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
+const resolveDirectCommandCandidates = (ctx: TPluginSlotContext): TDirectCommandCandidate[] => {
+  const runtimeCtx = ctx as any;
+  const sharkordGlobal = (window as any)?.sharkord;
+
+  const candidates = [
+    runtimeCtx?.executeCommand,
+    runtimeCtx?.executePluginCommand,
+    runtimeCtx?.invokePluginCommand,
+    runtimeCtx?.invokeCommand,
+    runtimeCtx?.commands?.execute,
+    runtimeCtx?.commands?.executeCommand,
+    runtimeCtx?.commands?.invoke,
+    runtimeCtx?.plugins?.executeCommand,
+    runtimeCtx?.plugins?.execute,
+    runtimeCtx?.plugins?.invoke,
+    sharkordGlobal?.executeCommand,
+    sharkordGlobal?.executePluginCommand,
+    sharkordGlobal?.invokePluginCommand,
+    sharkordGlobal?.invokeCommand,
+    sharkordGlobal?.commands?.execute,
+    sharkordGlobal?.commands?.executeCommand,
+    sharkordGlobal?.commands?.invoke,
+    sharkordGlobal?.plugins?.executeCommand,
+    sharkordGlobal?.plugins?.execute,
+    sharkordGlobal?.plugins?.invoke
+  ];
+
+  return Array.from(new Set(candidates.filter((candidate) => typeof candidate === 'function')));
+};
+
+const callDirectCandidate = async (
+  candidate: TDirectCommandCandidate,
+  commandName: string,
+  args?: Record<string, unknown>
+): Promise<unknown> => {
+  const payloadArgs = args ?? {};
+  const attempts: unknown[][] = [
+    [commandName, args],
+    [{ commandName, args: payloadArgs }],
+    [{ name: commandName, args: payloadArgs }],
+    [{ command: commandName, args: payloadArgs }]
+  ];
+
+  for (const attemptArgs of attempts) {
+    try {
+      return await Promise.resolve(candidate(...attemptArgs));
+    } catch {
+      // try next signature
+    }
+  }
+
+  return undefined;
+};
+
+const wrapDirectCandidates = (candidates: TDirectCommandCandidate[]): TDirectExecuteCommand[] => {
+  return candidates.map((candidate) => async (commandName, args) => callDirectCandidate(candidate, commandName, args));
+};
+
+const getCommandExecutor = (ctx: TPluginSlotContext, directExecutors: TDirectExecuteCommand[]): TExecuteCommand => {
   const runtimeCtx = ctx as any;
   const sendMessage = runtimeCtx?.sendMessage as ((channelId: number, content: string) => void) | undefined;
+  const primaryDirectExecutor = directExecutors[0];
 
   return async (commandName, args) => {
+    if (primaryDirectExecutor) {
+      debugLog('command.execute.direct', { commandName });
+      return primaryDirectExecutor(commandName, args);
+    }
+
     const selectedChannelId = runtimeCtx?.selectedChannelId as number | undefined;
 
     if (!sendMessage || !selectedChannelId) {
