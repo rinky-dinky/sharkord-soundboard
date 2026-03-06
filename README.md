@@ -6,8 +6,8 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a quick-open
 
 - Quick-open soundboard button in the top-right plugin slot that opens a floating panel near voice controls.
 - Click-to-play sounds in the user's currently active voice channel.
-- Upload form for audio file + display name + emoji.
-- Uploaded sounds are stored in plugin settings and available to every user.
+- Upload form for audio file URL + display name + emoji.
+- Shared sounds are persisted in plugin settings and mirrored to a public JSON URL for client sync.
 
 ## Install
 
@@ -30,8 +30,38 @@ Expected layout:
 
 If ffmpeg is missing or not executable, the plugin will fail to load.
 
-## Usage
+## First-time setup (required)
+
+The soundboard UI reads shared sounds from a public JSON mirror URL.
+
+1. Download the blank `soundboard-sounds.json` file from this plugin's GitHub release assets.
+2. In Sharkord, attach `soundboard-sounds.json` to a message in any text channel.
+3. Open that attachment and copy its public URL.
+4. Open the soundboard panel.
+5. Paste that URL into **Shared sounds mirror URL**.
+6. Click **Sync**.
+
+### Optional plugin setting
+
+In plugin settings, `Public mirror filename` defaults to `soundboard-sounds.json`.
+Keep this matching the uploaded JSON filename unless you intentionally changed it.
+
+## Adding sounds
+
+To add a sound from Sharkord:
+
+1. Attach an audio file to a message in a text channel.
+2. Right-click the audio attachment and click **Copy link address**.
+3. Open the soundboard panel.
+4. Enter:
+   - **Sound name**
+   - **Emoji**
+   - **Direct file URL** (the copied attachment link)
+5. Click **Add**.
+6. Click **Sync** to refresh from the shared JSON mirror if needed.
+
+## Playing sounds
 
 - Click the 🔊 button in the top-right bar to open the floating soundboard panel.
-- The panel opens near the lower-left of the app so it is close to voice controls.
-- Join a voice channel, then click a sound to play it in your active call.
+- Join a voice channel.
+- Click any sound button to play it in your active call.
