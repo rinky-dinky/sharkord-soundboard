@@ -1,4 +1,5 @@
 import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
+import { createTRPCProxyClient, createWSClient, wsLink } from '@trpc/client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TSoundEntry } from '../types';
 
@@ -57,6 +58,28 @@ const getCommandExecutor = (ctx: TPluginSlotContext): TExecuteCommand => {
 const SoundboardPanel = (ctx: TPluginSlotContext) => {
   const { currentVoiceChannelId } = ctx;
   const executeCommand = useMemo(() => getCommandExecutor(ctx), [ctx]);
+  const bridgeAvailable = useMemo(() => {
+    const runtimeCtx = ctx as any;
+    const sharkordGlobal = (window as any)?.sharkord;
+
+    const candidates = [
+      runtimeCtx?.executeCommand,
+      runtimeCtx?.executePluginCommand,
+      runtimeCtx?.invokePluginCommand,
+      runtimeCtx?.commands?.execute,
+      runtimeCtx?.commands?.executeCommand,
+      runtimeCtx?.plugins?.executeCommand,
+      runtimeCtx?.plugins?.execute,
+      sharkordGlobal?.executeCommand,
+      sharkordGlobal?.executePluginCommand,
+      sharkordGlobal?.commands?.execute,
+      sharkordGlobal?.commands?.executeCommand,
+      sharkordGlobal?.plugins?.executeCommand,
+      sharkordGlobal?.plugins?.execute
+    ];
+
+    return candidates.some((candidate) => typeof candidate === 'function');
+  }, [ctx]);
 
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');
@@ -198,6 +221,15 @@ const SoundboardPanel = (ctx: TPluginSlotContext) => {
           </p>
         </div>
       </details>
+
+      <p className="text-xs opacity-70">
+        Command format: <code>/upload_sound "Sound Name" "🦈" "https://example.com/sound.mp3"</code>
+      </p>
+
+
+      <p className="text-sm text-yellow-500">
+        Command-only mode: actions are sent to the selected text channel. Upload/Play work; Refresh only triggers /list_sounds in chat.
+      </p>
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
     </div>
