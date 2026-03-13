@@ -61,6 +61,9 @@ Keep this matching the uploaded JSON filename unless you intentionally changed i
 - Join a voice channel.
 - Click any sound button to play it in your active call.
 
+<img width="380" height="368" alt="image" src="https://github.com/user-attachments/assets/5df58d10-2009-4f78-8a0e-d90563fffeba" />
+
+
 ## ⚠️ Note ⚠️
 
 This is just a vibe-coded project, use at your own risk.
