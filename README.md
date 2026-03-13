@@ -1,6 +1,6 @@
 # sharkord-soundboard
 
-A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a quick-open soundboard panel and plays shared sound effects in voice channels.
+A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard panel for playing shared sound effects in voice channels.
 
 ## Features
 
