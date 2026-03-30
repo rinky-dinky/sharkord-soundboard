@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { TListSoundsResponse, TSoundEntry } from '../types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { TListSoundsResponse, TSoundInfo } from '../types';
 
 const EMOJI_OPTIONS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
@@ -29,13 +29,14 @@ const SoundboardPanel = () => {
   const { currentVoiceChannelId } = state;
   const { executePluginAction } = actions;
 
-  const [sounds, setSounds] = useState<TSoundEntry[]>([]);
+  const [sounds, setSounds] = useState<TSoundInfo[]>([]);
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
-  const [sourceUrl, setSourceUrl] = useState('');
+  const [file, setFile] = useState<File | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const syncSounds = useCallback(async () => {
     setLoading(true);
@@ -56,8 +57,8 @@ const SoundboardPanel = () => {
   }, [syncSounds]);
 
   const onUpload = useCallback(async () => {
-    if (!sourceUrl.trim()) {
-      setError('Paste a file URL first.');
+    if (!file) {
+      setError('Select an audio file first.');
       return;
     }
 
@@ -65,22 +66,35 @@ const SoundboardPanel = () => {
     setError(null);
 
     try {
-      const newSound = await executePluginAction<TSoundEntry>('upload_sound', {
+      const fileData = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          // result is "data:<mimeType>;base64,<data>" — strip the prefix
+          resolve(result.split(',')[1] ?? '');
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const newSound = await executePluginAction<TSoundInfo>('upload_sound', {
         name,
         emoji,
-        url: sourceUrl.trim()
+        fileData,
+        mimeType: file.type || 'audio/mpeg'
       });
 
       setSounds((prev) => [newSound, ...prev.filter((item) => item.id !== newSound.id)]);
-      setSourceUrl('');
+      setFile(null);
       setName('');
       setShowEmojiPicker(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [emoji, executePluginAction, name, sourceUrl]);
+  }, [emoji, executePluginAction, file, name]);
 
   const onPlay = useCallback(
     async (soundId: string) => {
@@ -162,14 +176,18 @@ const SoundboardPanel = () => {
             </div>
           ) : null}
           <input
-            value={sourceUrl}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSourceUrl(e.target.value)}
-            placeholder="Direct file URL (https://...)"
-            className="rounded border bg-transparent px-2 py-1"
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*"
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFile(e.target.files?.[0] ?? null)}
+            className="rounded border bg-transparent px-2 py-1 text-sm file:mr-2 file:rounded file:border-0 file:bg-accent file:px-2 file:py-1 file:text-sm"
           />
+          {file ? (
+            <p className="text-xs opacity-60 truncate">{file.name} ({(file.size / 1024).toFixed(1)} KB)</p>
+          ) : null}
           <button
             type="button"
-            disabled={!sourceUrl || !name || !emoji || loading}
+            disabled={!file || !name || !emoji || loading}
             onClick={onUpload}
             className="rounded border px-2 py-1 disabled:opacity-50"
           >
