@@ -24,10 +24,25 @@ declare module '@sharkord/plugin-sdk' {
     currentVoiceChannelId?: number;
   };
 
+  // Mirrors the file fields we need from TFile in @sharkord/shared
+  export type TPluginEmojiFile = {
+    name: string;
+    _accessToken?: string;
+    _accessTokenExpiresAt?: number;
+  };
+
+  // Mirrors the subset of TJoinedEmoji exposed by the plugin store
+  export type TPluginEmoji = {
+    id: number;
+    name: string;
+    file: TPluginEmojiFile;
+  };
+
   export type TPluginStoreState = {
     ownUserId: number | undefined;
     selectedChannelId: number | undefined;
     currentVoiceChannelId: number | undefined;
+    emojis: TPluginEmoji[];
   };
 
   export type TPluginActions = {

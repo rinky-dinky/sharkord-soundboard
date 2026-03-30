@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { TPluginEmoji } from '@sharkord/plugin-sdk';
 import type { TListSoundsResponse, TSoundInfo } from '../types';
 
-const EMOJI_OPTIONS = [
+// ---------------------------------------------------------------------------
+// Emoji value conventions
+//   Native emoji  → unicode string, e.g. "🦈"
+//   Custom emoji  → relative URL, e.g. "/public/some-emoji.png"
+//                   (with optional ?accessToken=... query string)
+// ---------------------------------------------------------------------------
+
+const NATIVE_EMOJI_OPTIONS = [
   '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
   '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
   '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪',
@@ -12,6 +20,123 @@ const EMOJI_OPTIONS = [
   '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓',
   '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️'
 ];
+
+const isCustomEmoji = (value: string) => value.startsWith('/public/');
+
+const customEmojiUrl = (emoji: TPluginEmoji): string => {
+  const base = `/public/${emoji.file.name}`;
+  if (emoji.file._accessToken) {
+    const params = new URLSearchParams({ accessToken: emoji.file._accessToken });
+    if (emoji.file._accessTokenExpiresAt !== undefined) {
+      params.set('expires', String(emoji.file._accessTokenExpiresAt));
+    }
+    return `${base}?${params.toString()}`;
+  }
+  return base;
+};
+
+// Renders a single emoji value — either a unicode character or a custom image.
+const EmojiDisplay = ({ value, className }: { value: string; className?: string }) =>
+  isCustomEmoji(value) ? (
+    <img src={value} className={`inline-block object-contain align-middle ${className ?? 'h-5 w-5'}`} alt="" />
+  ) : (
+    <>{value}</>
+  );
+
+// ---------------------------------------------------------------------------
+// Two-tab emoji picker (Native | Custom).
+// The Custom tab is hidden when the server has no custom emojis.
+// ---------------------------------------------------------------------------
+
+const EmojiPicker = ({
+  value,
+  customEmojis,
+  onChange
+}: {
+  value: string;
+  customEmojis: TPluginEmoji[];
+  onChange: (emoji: string) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'native' | 'custom'>('native');
+  const hasCustom = customEmojis.length > 0;
+
+  const pick = (v: string) => {
+    onChange(v);
+    setOpen(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="Pick emoji"
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border hover:bg-accent"
+      >
+        <EmojiDisplay value={value} className="h-5 w-5" />
+      </button>
+
+      {open ? (
+        <div className="rounded border bg-background shadow-md">
+          {hasCustom ? (
+            <div className="flex border-b text-xs">
+              <button
+                type="button"
+                onClick={() => setTab('native')}
+                className={`flex-1 py-1.5 hover:bg-accent ${tab === 'native' ? 'font-semibold' : 'opacity-60'}`}
+              >
+                Emoji
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab('custom')}
+                className={`flex-1 py-1.5 hover:bg-accent ${tab === 'custom' ? 'font-semibold' : 'opacity-60'}`}
+              >
+                Custom
+              </button>
+            </div>
+          ) : null}
+
+          {tab === 'native' || !hasCustom ? (
+            <div className="grid grid-cols-8 gap-1 p-2">
+              {NATIVE_EMOJI_OPTIONS.map((candidate) => (
+                <button
+                  key={candidate}
+                  type="button"
+                  onClick={() => pick(candidate)}
+                  className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
+                >
+                  {candidate}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-8 gap-1 p-2 max-h-48 overflow-y-auto">
+              {customEmojis.map((emoji) => {
+                const url = customEmojiUrl(emoji);
+                return (
+                  <button
+                    key={emoji.id}
+                    type="button"
+                    title={emoji.name}
+                    onClick={() => pick(url)}
+                    className={`rounded p-1 hover:bg-accent ${value === url ? 'bg-accent' : ''}`}
+                  >
+                    <img src={url} className="h-7 w-7 object-contain" alt={emoji.name} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
 
 const useSharkordStore = () => {
   const store = window.__SHARKORD_STORE__;
@@ -25,25 +150,24 @@ const useSharkordStore = () => {
 };
 
 // Inline edit card shown in the main grid when edit mode is active.
-// Name saves on blur or Enter; emoji saves immediately on pick; delete requires two taps.
 const EditableCard = ({
   sound,
+  customEmojis,
   disabled,
   onDelete,
   onUpdate
 }: {
   sound: TSoundInfo;
+  customEmojis: TPluginEmoji[];
   disabled: boolean;
   onDelete: () => Promise<void>;
   onUpdate: (name: string, emoji: string) => Promise<void>;
 }) => {
   const [localName, setLocalName] = useState(sound.name);
   const [localEmoji, setLocalEmoji] = useState(sound.emoji);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Keep local state in sync if the parent updates the sound (e.g. after save)
   useEffect(() => {
     setLocalName(sound.name);
     setLocalEmoji(sound.emoji);
@@ -57,10 +181,7 @@ const EditableCard = ({
 
   const handleNameBlur = () => {
     const trimmed = localName.trim();
-    if (!trimmed) {
-      setLocalName(sound.name); // reset if cleared
-      return;
-    }
+    if (!trimmed) { setLocalName(sound.name); return; }
     if (trimmed !== sound.name || localEmoji !== sound.emoji) {
       onUpdate(trimmed, localEmoji).catch(() => {
         setLocalName(sound.name);
@@ -69,9 +190,8 @@ const EditableCard = ({
     }
   };
 
-  const handleEmojiPick = (emoji: string) => {
+  const handleEmojiChange = (emoji: string) => {
     setLocalEmoji(emoji);
-    setShowEmojiPicker(false);
     onUpdate(localName.trim() || sound.name, emoji).catch(() => setLocalEmoji(sound.emoji));
   };
 
@@ -106,60 +226,33 @@ const EditableCard = ({
           </svg>
         </button>
 
-        {/* Emoji picker toggle */}
-        <button
-          type="button"
-          onClick={() => setShowEmojiPicker((v) => !v)}
-          aria-expanded={showEmojiPicker}
-          aria-label="Pick emoji"
-          className="shrink-0 flex h-7 w-7 items-center justify-center rounded border text-base hover:bg-accent"
-        >
-          {localEmoji}
-        </button>
+        <EmojiPicker value={localEmoji} customEmojis={customEmojis} onChange={handleEmojiChange} />
 
-        {/* Name input */}
         <input
           value={localName}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLocalName(e.target.value)}
           onBlur={handleNameBlur}
           onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
             if (e.key === 'Enter') e.currentTarget.blur();
-            if (e.key === 'Escape') {
-              setLocalName(sound.name);
-              e.currentTarget.blur();
-            }
+            if (e.key === 'Escape') { setLocalName(sound.name); e.currentTarget.blur(); }
           }}
           className="min-w-0 flex-1 rounded border bg-transparent px-1.5 py-0.5 text-sm"
         />
       </div>
-
-      {showEmojiPicker ? (
-        <div className="grid grid-cols-8 gap-1 rounded border p-1.5">
-          {EMOJI_OPTIONS.map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              className={`rounded px-1 py-1 text-base hover:bg-accent ${localEmoji === candidate ? 'bg-accent' : ''}`}
-              onClick={() => handleEmojiPick(candidate)}
-            >
-              {candidate}
-            </button>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 };
 
+// ---------------------------------------------------------------------------
+
 const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
   const { state, actions } = useSharkordStore();
-  const { currentVoiceChannelId } = state;
+  const { currentVoiceChannelId, emojis: customEmojis = [] } = state;
   const { executePluginAction } = actions;
 
   const [sounds, setSounds] = useState<TSoundInfo[]>([]);
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -183,34 +276,24 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
   }, [syncSounds]);
 
   const onUpload = useCallback(async () => {
-    if (!file) {
-      setError('Select an audio file first.');
-      return;
-    }
+    if (!file) { setError('Select an audio file first.'); return; }
     setLoading(true);
     setError(null);
     try {
       const fileData = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          resolve(result.split(',')[1] ?? '');
-        };
+        reader.onload = () => { resolve((reader.result as string).split(',')[1] ?? ''); };
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
 
       const newSound = await executePluginAction<TSoundInfo>('upload_sound', {
-        name,
-        emoji,
-        fileData,
-        mimeType: file.type || 'audio/mpeg'
+        name, emoji, fileData, mimeType: file.type || 'audio/mpeg'
       });
 
       setSounds((prev) => [newSound, ...prev.filter((item) => item.id !== newSound.id)]);
       setFile(null);
       setName('');
-      setShowEmojiPicker(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -219,52 +302,43 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
     }
   }, [emoji, executePluginAction, file, name]);
 
-  const onPlay = useCallback(
-    async (soundId: string) => {
-      setLoading(true);
-      setError(null);
-      try {
-        await executePluginAction('play_sound', { soundId });
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        if (/sound not found/i.test(message)) {
-          setSounds((prev) => prev.filter((entry) => entry.id !== soundId));
-          setError('That sound no longer exists and was removed from your local list.');
-        } else {
-          setError(message);
-        }
-      } finally {
-        setLoading(false);
-      }
-    },
-    [executePluginAction]
-  );
-
-  const onDelete = useCallback(
-    async (soundId: string) => {
-      setError(null);
-      try {
-        await executePluginAction('delete_sound', { soundId });
+  const onPlay = useCallback(async (soundId: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      await executePluginAction('play_sound', { soundId });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (/sound not found/i.test(message)) {
         setSounds((prev) => prev.filter((entry) => entry.id !== soundId));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError('That sound no longer exists and was removed from your local list.');
+      } else {
+        setError(message);
       }
-    },
-    [executePluginAction]
-  );
+    } finally {
+      setLoading(false);
+    }
+  }, [executePluginAction]);
 
-  const onUpdate = useCallback(
-    async (soundId: string, name: string, emoji: string) => {
-      setError(null);
-      try {
-        const updated = await executePluginAction<TSoundInfo>('update_sound', { soundId, name, emoji });
-        setSounds((prev) => prev.map((s) => (s.id === soundId ? updated : s)));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    },
-    [executePluginAction]
-  );
+  const onDelete = useCallback(async (soundId: string) => {
+    setError(null);
+    try {
+      await executePluginAction('delete_sound', { soundId });
+      setSounds((prev) => prev.filter((entry) => entry.id !== soundId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [executePluginAction]);
+
+  const onUpdate = useCallback(async (soundId: string, name: string, emoji: string) => {
+    setError(null);
+    try {
+      const updated = await executePluginAction<TSoundInfo>('update_sound', { soundId, name, emoji });
+      setSounds((prev) => prev.map((s) => (s.id === soundId ? updated : s)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [executePluginAction]);
 
   return (
     <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
@@ -281,9 +355,10 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
                 key={sound.id}
                 disabled={!currentVoiceChannelId || loading}
                 onClick={() => onPlay(sound.id)}
-                className="rounded border px-2 py-1 disabled:opacity-50"
+                className="rounded border px-2 py-1 text-sm disabled:opacity-50 flex items-center gap-1.5 justify-center"
               >
-                {sound.emoji} {sound.name}
+                <EmojiDisplay value={sound.emoji} className="h-5 w-5 shrink-0" />
+                <span className="truncate">{sound.name}</span>
               </button>
             ))}
           </div>
@@ -299,6 +374,7 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
                 <EditableCard
                   key={sound.id}
                   sound={sound}
+                  customEmojis={customEmojis}
                   disabled={loading}
                   onDelete={() => onDelete(sound.id)}
                   onUpdate={(n, e) => onUpdate(sound.id, n, e)}
@@ -319,34 +395,8 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
               placeholder="Sound name"
               className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1"
             />
-            <button
-              type="button"
-              className="inline-flex h-9 min-h-9 w-9 min-w-9 shrink-0 items-center justify-center rounded border p-0 text-xl leading-none hover:bg-accent"
-              onClick={() => setShowEmojiPicker((v) => !v)}
-              title="Pick emoji"
-              aria-label="Pick emoji"
-              aria-expanded={showEmojiPicker}
-            >
-              {emoji}
-            </button>
+            <EmojiPicker value={emoji} customEmojis={customEmojis} onChange={setEmoji} />
           </div>
-          {showEmojiPicker ? (
-            <div className="grid grid-cols-8 gap-1 rounded border p-2">
-              {EMOJI_OPTIONS.map((candidate) => (
-                <button
-                  key={candidate}
-                  type="button"
-                  className={`rounded px-1 py-1 text-lg hover:bg-accent ${emoji === candidate ? 'bg-accent' : ''}`}
-                  onClick={() => {
-                    setEmoji(candidate);
-                    setShowEmojiPicker(false);
-                  }}
-                >
-                  {candidate}
-                </button>
-              ))}
-            </div>
-          ) : null}
           <input
             ref={fileInputRef}
             type="file"
