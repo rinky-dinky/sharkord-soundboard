@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import type { TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from './types';
@@ -63,6 +63,128 @@ const getExtFromMimeType = (mimeType: string): string => {
   return 'mp3';
 };
 
+// ---------------------------------------------------------------------------
+// Legacy migration (v0.0.2 and earlier stored sounds as a JSON string in the
+// plugin settings under the key "soundsJson"; each entry had sourceUrl or
+// dataBase64 instead of localPath)
+// ---------------------------------------------------------------------------
+
+type TLegacySoundEntry = {
+  id: string;
+  name: string;
+  emoji: string;
+  mimeType: string;
+  sourceUrl?: string;
+  dataBase64?: string;
+  createdByUserId: number;
+  createdAt: number;
+};
+
+const parseLegacySounds = (raw: unknown): TLegacySoundEntry[] => {
+  if (typeof raw !== 'string' || raw.length === 0) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is TLegacySoundEntry =>
+        entry !== null &&
+        typeof entry === 'object' &&
+        typeof entry.id === 'string' &&
+        typeof entry.name === 'string' &&
+        typeof entry.emoji === 'string' &&
+        typeof entry.mimeType === 'string' &&
+        typeof entry.createdByUserId === 'number' &&
+        typeof entry.createdAt === 'number' &&
+        (typeof entry.sourceUrl === 'string' || typeof entry.dataBase64 === 'string')
+    );
+  } catch {
+    return [];
+  }
+};
+
+const migrateLegacySettings = async (ctx: PluginContext): Promise<void> => {
+  // Only run migration if sounds.json does not exist yet
+  try {
+    await access(getSoundsJsonPath(ctx.path), fsConstants.F_OK);
+    return; // already initialised, nothing to do
+  } catch {
+    // sounds.json absent — check for legacy settings data
+  }
+
+  const legacySettings = await ctx.settings.register([
+    {
+      key: 'soundsJson',
+      name: 'Legacy soundboard data (JSON)',
+      description: 'Managed by the soundboard plugin. Migrated automatically to the plugin directory.',
+      type: 'string',
+      defaultValue: '[]'
+    }
+  ] as const);
+
+  const raw = await legacySettings.get('soundsJson');
+  const legacySounds = parseLegacySounds(raw);
+
+  if (legacySounds.length === 0) {
+    ctx.debug('[soundboard] no legacy sounds found, skipping migration');
+    return;
+  }
+
+  ctx.log(`[soundboard] migrating ${legacySounds.length} legacy sound(s) to plugin directory…`);
+
+  const migratedSounds: TSoundEntry[] = [];
+
+  for (const old of legacySounds) {
+    try {
+      let fileBuffer: Buffer | null = null;
+
+      if (old.dataBase64) {
+        fileBuffer = Buffer.from(old.dataBase64, 'base64');
+      } else if (old.sourceUrl) {
+        const response = await fetch(old.sourceUrl);
+        if (!response.ok) {
+          ctx.debug(`[soundboard] could not fetch legacy sound URL (HTTP ${response.status})`, { id: old.id });
+          continue;
+        }
+        fileBuffer = Buffer.from(await response.arrayBuffer());
+      }
+
+      if (!fileBuffer) continue;
+
+      if (fileBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
+        ctx.debug('[soundboard] legacy sound too large, skipping', { id: old.id });
+        continue;
+      }
+
+      const ext = getExtFromMimeType(old.mimeType);
+      const localPath = join(getSoundsDir(ctx.path), `${old.id}.${ext}`);
+      await writeFile(localPath, fileBuffer);
+
+      migratedSounds.push({
+        id: old.id,
+        name: old.name,
+        emoji: old.emoji,
+        mimeType: old.mimeType,
+        localPath,
+        createdByUserId: old.createdByUserId,
+        createdAt: old.createdAt
+      });
+
+      ctx.log(`[soundboard] migrated sound "${old.name}" (${old.id})`);
+    } catch (error) {
+      ctx.debug('[soundboard] failed to migrate legacy sound', { id: old.id, error });
+    }
+  }
+
+  if (migratedSounds.length > 0) {
+    await saveSounds(ctx.path, migratedSounds);
+    ctx.log(`[soundboard] migration complete: ${migratedSounds.length}/${legacySounds.length} sound(s) imported`);
+    // Clear the legacy settings value so the migration doesn't re-run
+    legacySettings.set('soundsJson', '[]');
+  }
+};
+
+// ---------------------------------------------------------------------------
+
 type TRuntimePlayback = {
   producer: Producer;
   transport: PlainTransport;
@@ -98,6 +220,7 @@ const onLoad = async (ctx: PluginContext) => {
   ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
 
   await mkdir(getSoundsDir(ctx.path), { recursive: true });
+  await migrateLegacySettings(ctx);
 
   ctx.ui.enable();
 
@@ -150,6 +273,24 @@ const onLoad = async (ctx: PluginContext) => {
 
       const { localPath: _localPath, ...newEntryInfo } = newEntry;
       return newEntryInfo;
+    }
+  });
+
+  ctx.actions.register({
+    name: 'delete_sound',
+    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string }) {
+      const sounds = await loadSounds(ctx.path);
+      const sound = sounds.find((entry) => entry.id === payload.soundId);
+      if (!sound) throw new Error('Sound not found.');
+
+      try {
+        await unlink(sound.localPath);
+      } catch {
+        // File may already be gone; continue with removing from index
+      }
+
+      await saveSounds(ctx.path, sounds.filter((entry) => entry.id !== payload.soundId));
+      return { ok: true };
     }
   });
 
