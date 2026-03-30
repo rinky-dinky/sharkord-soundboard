@@ -1,4 +1,3 @@
-import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
 import { useCallback, useEffect, useState } from 'react';
 import type { TListSoundsResponse, TSoundEntry } from '../types';
 
@@ -14,8 +13,21 @@ const EMOJI_OPTIONS = [
   '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️'
 ];
 
-const SoundboardPanel = (ctx: TPluginSlotContext) => {
-  const { currentVoiceChannelId, executePluginAction } = ctx;
+const useSharkordStore = () => {
+  const store = window.__SHARKORD_STORE__;
+  const [state, setState] = useState(() => store.getState());
+
+  useEffect(() => {
+    return store.subscribe(() => setState(store.getState()));
+  }, [store]);
+
+  return { state, actions: store.actions };
+};
+
+const SoundboardPanel = () => {
+  const { state, actions } = useSharkordStore();
+  const { currentVoiceChannelId } = state;
+  const { executePluginAction } = actions;
 
   const [sounds, setSounds] = useState<TSoundEntry[]>([]);
   const [name, setName] = useState('');

@@ -1,4 +1,14 @@
+import type { TPluginStore } from '@sharkord/plugin-sdk';
+
+declare global {
+  interface Window {
+    __SHARKORD_STORE__: TPluginStore;
+  }
+}
+
 declare module '@sharkord/plugin-sdk' {
+  export const PLUGIN_SDK_VERSION: number;
+
   export enum PluginSlot {
     CONNECT_SCREEN = 'connect_screen',
     HOME_SCREEN = 'home_screen',
@@ -7,22 +17,32 @@ declare module '@sharkord/plugin-sdk' {
     FULL_SCREEN = 'full_screen'
   }
 
-  export type TPluginSlotContext = {
-    users?: unknown[];
-    selectedChannelId?: number;
+  export type TPluginComponentsMapBySlotId = Record<string, React.ComponentType[]>;
+
+  export type TInvokerContext = {
+    userId: number;
     currentVoiceChannelId?: number;
-    ownUserId?: number;
+  };
+
+  export type TPluginStoreState = {
+    ownUserId: number | undefined;
+    selectedChannelId: number | undefined;
+    currentVoiceChannelId: number | undefined;
+  };
+
+  export type TPluginActions = {
+    sendMessage: (channelId: number, content: string) => Promise<void>;
+    selectChannel: (channelId: number) => void;
     executePluginAction: <TResponse = unknown, TPayload = unknown>(
       actionName: string,
       payload?: TPayload
     ) => Promise<TResponse>;
   };
 
-  export type TPluginComponentsMapBySlotId = Record<string, React.ComponentType<any>[]>;
-
-  export type TInvokerContext = {
-    userId: number;
-    currentVoiceChannelId?: number;
+  export type TPluginStore = {
+    getState: () => TPluginStoreState;
+    subscribe: (listener: () => void) => () => void;
+    actions: TPluginActions;
   };
 
   export type Producer = {
@@ -97,7 +117,6 @@ declare module '@sharkord/ui' {
   export const Button: React.ComponentType<any>;
   export const Input: React.ComponentType<any>;
 }
-
 
 declare module 'react-dom' {
   export function createPortal(
