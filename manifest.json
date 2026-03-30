@@ -1,0 +1,10 @@
+{
+  "id": "sharkord-soundboard",
+  "name": "sharkord-soundboard",
+  "version": "0.0.1",
+  "sdkVersion": 1,
+  "author": "rinky-dinky",
+  "description": "In-app soundboard plugin for Sharkord voice calls.",
+  "homepage": "https://github.com/rinky-dinky/sharkord-soundboard",
+  "logo": "https://i.imgur.com/WQBHYh3.png"
+}

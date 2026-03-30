@@ -81,7 +81,8 @@ const clientGlobals: BunPlugin = {
 await Promise.all([
   Bun.build({
     entrypoints: ['src/server.ts'],
-    outdir,
+    outdir: `${outdir}/server`,
+    naming: 'index.js',
     target: 'bun',
     minify: true,
     format: 'esm',
@@ -89,7 +90,8 @@ await Promise.all([
   }),
   Bun.build({
     entrypoints: ['src/client.ts'],
-    outdir,
+    outdir: `${outdir}/client`,
+    naming: 'index.js',
     target: 'browser',
     minify: true,
     format: 'esm',
@@ -98,4 +100,4 @@ await Promise.all([
   })
 ]);
 
-await fs.copyFile('package.json', `${outdir}/package.json`);
+await fs.copyFile('manifest.json', `${outdir}/manifest.json`);

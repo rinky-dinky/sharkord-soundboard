@@ -1,10 +1,9 @@
-import type { TPluginSlotContext } from '@sharkord/plugin-sdk';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { SoundboardPanel } from './soundboard-panel';
 
-const SoundboardLauncher = (ctx: TPluginSlotContext) => {
+const SoundboardLauncher = () => {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({});
@@ -118,7 +117,7 @@ const SoundboardLauncher = (ctx: TPluginSlotContext) => {
               </div>
 
               <div className="h-[calc(100%-45px)]">
-                <SoundboardPanel {...ctx} />
+                <SoundboardPanel />
               </div>
             </div>,
             document.body
