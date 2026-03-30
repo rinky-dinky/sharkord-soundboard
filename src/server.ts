@@ -64,9 +64,23 @@ const getExtFromMimeType = (mimeType: string): string => {
 };
 
 // ---------------------------------------------------------------------------
-// Legacy migration (v0.0.2 and earlier stored sounds as a JSON string in the
-// plugin settings under the key "soundsJson"; each entry had sourceUrl or
-// dataBase64 instead of localPath)
+// Legacy migration
+//
+// v0.0.2 and earlier had two possible data sources:
+//
+//  1. Plugin settings key "soundsJson" — a JSON string of a plain TSoundEntry
+//     array: [{id, name, emoji, mimeType, sourceUrl?, dataBase64?, ...}, ...]
+//
+//  2. Public mirror files written by syncPublicSoundsMirror — wrapped in an
+//     object: {"sounds":[...]}
+//     Candidates: <public>/soundboard-sounds.json
+//                 <public>/soundboard/sounds.json
+//     Where <public> was probed as: $SHARKORD_PUBLIC_DIR, <plugin>/../../public,
+//     <plugin>/../public, /public
+//
+// The settings value is often empty after a server restart (it may not have
+// been persisted), so we fall back to reading the public mirror files which
+// the user confirmed exist on disk.
 // ---------------------------------------------------------------------------
 
 type TLegacySoundEntry = {
@@ -80,49 +94,115 @@ type TLegacySoundEntry = {
   createdAt: number;
 };
 
-const parseLegacySounds = (raw: unknown): TLegacySoundEntry[] => {
-  if (typeof raw !== 'string' || raw.length === 0) return [];
+const isValidLegacyEntry = (entry: unknown): entry is TLegacySoundEntry =>
+  entry !== null &&
+  typeof entry === 'object' &&
+  typeof (entry as Record<string, unknown>).id === 'string' &&
+  typeof (entry as Record<string, unknown>).name === 'string' &&
+  typeof (entry as Record<string, unknown>).emoji === 'string' &&
+  typeof (entry as Record<string, unknown>).mimeType === 'string' &&
+  typeof (entry as Record<string, unknown>).createdByUserId === 'number' &&
+  typeof (entry as Record<string, unknown>).createdAt === 'number' &&
+  (
+    typeof (entry as Record<string, unknown>).sourceUrl === 'string' ||
+    typeof (entry as Record<string, unknown>).dataBase64 === 'string'
+  );
+
+// Parses the plain-array format stored in settings: [{...}, ...]
+const parseLegacySettingsArray = (raw: string): TLegacySoundEntry[] => {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (entry): entry is TLegacySoundEntry =>
-        entry !== null &&
-        typeof entry === 'object' &&
-        typeof entry.id === 'string' &&
-        typeof entry.name === 'string' &&
-        typeof entry.emoji === 'string' &&
-        typeof entry.mimeType === 'string' &&
-        typeof entry.createdByUserId === 'number' &&
-        typeof entry.createdAt === 'number' &&
-        (typeof entry.sourceUrl === 'string' || typeof entry.dataBase64 === 'string')
-    );
+    return parsed.filter(isValidLegacyEntry);
   } catch {
     return [];
   }
 };
 
-const migrateLegacySettings = async (ctx: PluginContext): Promise<void> => {
-  // Only run migration if sounds.json does not exist yet
+// Parses the wrapped format written by the public mirror: {"sounds":[{...}, ...]}
+const parseLegacyPublicJson = (raw: string): TLegacySoundEntry[] => {
   try {
-    await access(getSoundsJsonPath(ctx.path), fsConstants.F_OK);
-    return; // already initialised, nothing to do
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+    const arr = (parsed as Record<string, unknown>).sounds;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(isValidLegacyEntry);
   } catch {
-    // sounds.json absent — check for legacy settings data
+    return [];
+  }
+};
+
+// Scans the candidate public directories for the mirror files the old plugin
+// wrote, returning the first non-empty sound list found.
+const findLegacyPublicSounds = async (pluginPath: string): Promise<TLegacySoundEntry[]> => {
+  const envPublicDir = process.env.SHARKORD_PUBLIC_DIR?.trim();
+  const publicDirCandidates = [
+    envPublicDir,
+    join(pluginPath, '..', '..', 'public'),
+    join(pluginPath, '..', 'public'),
+    '/public'
+  ].filter((v): v is string => Boolean(v));
+
+  // The old code wrote to both of these paths
+  const relativeFilenames = ['soundboard-sounds.json', join('soundboard', 'sounds.json')];
+
+  for (const dir of publicDirCandidates) {
+    for (const rel of relativeFilenames) {
+      try {
+        const raw = await readFile(join(dir, rel), 'utf8');
+        const sounds = parseLegacyPublicJson(raw);
+        if (sounds.length > 0) return sounds;
+      } catch {
+        // not found, continue
+      }
+    }
   }
 
-  const legacySettings = await ctx.settings.register([
-    {
-      key: 'soundsJson',
-      name: 'Legacy soundboard data (JSON)',
-      description: 'Managed by the soundboard plugin. Migrated automatically to the plugin directory.',
-      type: 'string',
-      defaultValue: '[]'
-    }
-  ] as const);
+  return [];
+};
 
-  const raw = await legacySettings.get('soundsJson');
-  const legacySounds = parseLegacySounds(raw);
+const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
+  // Skip if sounds.json already exists (migration already ran or new install)
+  try {
+    await access(getSoundsJsonPath(ctx.path), fsConstants.F_OK);
+    return;
+  } catch {
+    // not present — proceed
+  }
+
+  // Try settings first (plain JSON array)
+  let legacySounds: TLegacySoundEntry[] = [];
+
+  try {
+    const legacySettings = await ctx.settings.register([
+      {
+        key: 'soundsJson',
+        name: 'Legacy soundboard data (JSON)',
+        description: 'Managed by the soundboard plugin. Migrated automatically to the plugin directory.',
+        type: 'string',
+        defaultValue: '[]'
+      }
+    ] as const);
+
+    const raw = await legacySettings.get('soundsJson');
+    legacySounds = parseLegacySettingsArray(raw);
+
+    if (legacySounds.length > 0) {
+      ctx.log(`[soundboard] found ${legacySounds.length} sound(s) in legacy settings`);
+      // Clear after reading so migration does not re-run via this path
+      legacySettings.set('soundsJson', '[]');
+    }
+  } catch (error) {
+    ctx.debug('[soundboard] could not read legacy settings, will try public files', error);
+  }
+
+  // Fall back to the public mirror files if settings were empty
+  if (legacySounds.length === 0) {
+    legacySounds = await findLegacyPublicSounds(ctx.path);
+    if (legacySounds.length > 0) {
+      ctx.log(`[soundboard] found ${legacySounds.length} sound(s) in legacy public mirror file`);
+    }
+  }
 
   if (legacySounds.length === 0) {
     ctx.debug('[soundboard] no legacy sounds found, skipping migration');
@@ -178,8 +258,8 @@ const migrateLegacySettings = async (ctx: PluginContext): Promise<void> => {
   if (migratedSounds.length > 0) {
     await saveSounds(ctx.path, migratedSounds);
     ctx.log(`[soundboard] migration complete: ${migratedSounds.length}/${legacySounds.length} sound(s) imported`);
-    // Clear the legacy settings value so the migration doesn't re-run
-    legacySettings.set('soundsJson', '[]');
+  } else {
+    ctx.log('[soundboard] migration ran but no sounds could be imported (check debug logs for details)');
   }
 };
 
@@ -220,7 +300,7 @@ const onLoad = async (ctx: PluginContext) => {
   ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
 
   await mkdir(getSoundsDir(ctx.path), { recursive: true });
-  await migrateLegacySettings(ctx);
+  await migrateLegacy(ctx);
 
   ctx.ui.enable();
 

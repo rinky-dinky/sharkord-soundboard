@@ -24,8 +24,8 @@ const useSharkordStore = () => {
   return { state, actions: store.actions };
 };
 
-// Two-tap confirm delete button: first click arms it (shows "Confirm?"),
-// second click within 3 s executes; otherwise it disarms automatically.
+// Two-tap confirm delete: first click arms (shows "Confirm?"), second click
+// within 3 s actually deletes; otherwise auto-disarms.
 const DeleteButton = ({
   onDelete,
   disabled
@@ -113,7 +113,6 @@ const SoundboardPanel = () => {
         const reader = new FileReader();
         reader.onload = () => {
           const result = reader.result as string;
-          // result is "data:<mimeType>;base64,<data>" — strip the prefix
           resolve(result.split(',')[1] ?? '');
         };
         reader.onerror = reject;
@@ -177,7 +176,9 @@ const SoundboardPanel = () => {
   return (
     <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
       <p className="text-sm opacity-70">
-        {currentVoiceChannelId ? 'Click a sound to play it in your active voice call.' : 'Join a voice call to play sounds.'}
+        {currentVoiceChannelId
+          ? 'Click a sound to play it in your active voice call.'
+          : 'Join a voice call to play sounds.'}
       </p>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
@@ -194,8 +195,11 @@ const SoundboardPanel = () => {
       </div>
 
       <details className="border rounded-md p-2" open={false}>
-        <summary className="cursor-pointer select-none font-medium">Add Sound</summary>
-        <div className="mt-2 flex flex-col gap-2">
+        <summary className="cursor-pointer select-none font-medium">Manage Sounds</summary>
+
+        {/* Add sound form */}
+        <div className="mt-3 flex flex-col gap-2 border-b pb-3">
+          <p className="text-xs font-medium opacity-60 uppercase tracking-wide">Add Sound</p>
           <div className="flex gap-2 items-center">
             <input
               value={name}
@@ -250,23 +254,19 @@ const SoundboardPanel = () => {
             Add
           </button>
         </div>
-      </details>
 
-      <details className="border rounded-md p-2" open={false}>
-        <summary className="cursor-pointer select-none font-medium">Manage Sounds</summary>
-        <div className="mt-2 flex flex-col gap-1">
+        {/* Existing sounds list */}
+        <div className="mt-3 flex flex-col gap-1">
+          <p className="text-xs font-medium opacity-60 uppercase tracking-wide">Existing Sounds</p>
           {sounds.length === 0 ? (
-            <p className="text-sm opacity-60">No sounds yet.</p>
+            <p className="mt-1 text-sm opacity-60">No sounds yet.</p>
           ) : (
             sounds.map((sound) => (
               <div key={sound.id} className="flex items-center gap-2 py-0.5">
                 <span className="min-w-0 flex-1 truncate text-sm">
                   {sound.emoji} {sound.name}
                 </span>
-                <DeleteButton
-                  disabled={loading}
-                  onDelete={() => onDelete(sound.id)}
-                />
+                <DeleteButton disabled={loading} onDelete={() => onDelete(sound.id)} />
               </div>
             ))
           )}
