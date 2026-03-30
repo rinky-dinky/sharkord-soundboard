@@ -132,28 +132,35 @@ const parseLegacyPublicJson = (raw: string): TLegacySoundEntry[] => {
   }
 };
 
+const LEGACY_MIGRATION_MARKER = '.legacy-migration-done';
+
 // Scans the candidate public directories for the mirror files the old plugin
-// wrote, returning the first non-empty sound list found.
-const findLegacyPublicSounds = async (pluginPath: string): Promise<TLegacySoundEntry[]> => {
+// wrote, returning the first non-empty sound list found and logging every path
+// tried so failures are easy to diagnose.
+const findLegacyPublicSounds = async (
+  ctx: PluginContext
+): Promise<TLegacySoundEntry[]> => {
   const envPublicDir = process.env.SHARKORD_PUBLIC_DIR?.trim();
   const publicDirCandidates = [
     envPublicDir,
-    join(pluginPath, '..', '..', 'public'),
-    join(pluginPath, '..', 'public'),
+    join(ctx.path, '..', '..', 'public'),
+    join(ctx.path, '..', 'public'),
     '/public'
   ].filter((v): v is string => Boolean(v));
 
-  // The old code wrote to both of these paths
+  // The old code wrote to both of these paths inside the public dir
   const relativeFilenames = ['soundboard-sounds.json', join('soundboard', 'sounds.json')];
 
   for (const dir of publicDirCandidates) {
     for (const rel of relativeFilenames) {
+      const fullPath = join(dir, rel);
       try {
-        const raw = await readFile(join(dir, rel), 'utf8');
+        const raw = await readFile(fullPath, 'utf8');
         const sounds = parseLegacyPublicJson(raw);
+        ctx.log(`[soundboard] found legacy file at ${fullPath} (${sounds.length} valid entries)`);
         if (sounds.length > 0) return sounds;
       } catch {
-        // not found, continue
+        ctx.log(`[soundboard] no legacy file at ${fullPath}`);
       }
     }
   }
@@ -162,15 +169,21 @@ const findLegacyPublicSounds = async (pluginPath: string): Promise<TLegacySoundE
 };
 
 const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
-  // Skip if sounds.json already exists (migration already ran or new install)
+  // Use a dedicated marker file so this gate is independent of sounds.json.
+  // sounds.json is created whenever a new sound is uploaded, which would
+  // otherwise cause the migration to be silently skipped on every restart.
+  const markerPath = join(getSoundsDir(ctx.path), LEGACY_MIGRATION_MARKER);
   try {
-    await access(getSoundsJsonPath(ctx.path), fsConstants.F_OK);
+    await access(markerPath, fsConstants.F_OK);
+    ctx.log('[soundboard] legacy migration already completed, skipping');
     return;
   } catch {
-    // not present — proceed
+    // marker absent — proceed
   }
 
-  // Try settings first (plain JSON array)
+  ctx.log('[soundboard] checking for legacy sounds to migrate…');
+
+  // Try settings first (plain JSON array stored under key "soundsJson")
   let legacySounds: TLegacySoundEntry[] = [];
 
   try {
@@ -189,23 +202,22 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
 
     if (legacySounds.length > 0) {
       ctx.log(`[soundboard] found ${legacySounds.length} sound(s) in legacy settings`);
-      // Clear after reading so migration does not re-run via this path
       legacySettings.set('soundsJson', '[]');
+    } else {
+      ctx.log('[soundboard] legacy settings key is empty, trying public mirror files…');
     }
   } catch (error) {
-    ctx.debug('[soundboard] could not read legacy settings, will try public files', error);
+    ctx.log(`[soundboard] could not read legacy settings (${String(error)}), trying public mirror files…`);
   }
 
   // Fall back to the public mirror files if settings were empty
   if (legacySounds.length === 0) {
-    legacySounds = await findLegacyPublicSounds(ctx.path);
-    if (legacySounds.length > 0) {
-      ctx.log(`[soundboard] found ${legacySounds.length} sound(s) in legacy public mirror file`);
-    }
+    legacySounds = await findLegacyPublicSounds(ctx);
   }
 
   if (legacySounds.length === 0) {
-    ctx.debug('[soundboard] no legacy sounds found, skipping migration');
+    ctx.log('[soundboard] no legacy sounds found — writing migration marker and continuing');
+    await writeFile(markerPath, String(Date.now()), 'utf8');
     return;
   }
 
@@ -220,9 +232,10 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
       if (old.dataBase64) {
         fileBuffer = Buffer.from(old.dataBase64, 'base64');
       } else if (old.sourceUrl) {
+        ctx.log(`[soundboard] fetching legacy sound "${old.name}" from ${old.sourceUrl}`);
         const response = await fetch(old.sourceUrl);
         if (!response.ok) {
-          ctx.debug(`[soundboard] could not fetch legacy sound URL (HTTP ${response.status})`, { id: old.id });
+          ctx.log(`[soundboard] fetch failed for "${old.name}" (HTTP ${response.status}) — skipping`);
           continue;
         }
         fileBuffer = Buffer.from(await response.arrayBuffer());
@@ -231,7 +244,7 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
       if (!fileBuffer) continue;
 
       if (fileBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
-        ctx.debug('[soundboard] legacy sound too large, skipping', { id: old.id });
+        ctx.log(`[soundboard] "${old.name}" exceeds size limit — skipping`);
         continue;
       }
 
@@ -249,18 +262,30 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
         createdAt: old.createdAt
       });
 
-      ctx.log(`[soundboard] migrated sound "${old.name}" (${old.id})`);
+      ctx.log(`[soundboard] migrated "${old.name}" (${old.id})`);
     } catch (error) {
-      ctx.debug('[soundboard] failed to migrate legacy sound', { id: old.id, error });
+      ctx.log(`[soundboard] error migrating "${old.name}": ${String(error)}`);
     }
   }
 
+  // Merge with any sounds already in the new system (old sounds first so
+  // they keep their original order; skip any whose id already exists)
   if (migratedSounds.length > 0) {
-    await saveSounds(ctx.path, migratedSounds);
-    ctx.log(`[soundboard] migration complete: ${migratedSounds.length}/${legacySounds.length} sound(s) imported`);
+    const existingSounds = await loadSounds(ctx.path);
+    const existingIds = new Set(existingSounds.map((s) => s.id));
+    const toAdd = migratedSounds.filter((s) => !existingIds.has(s.id));
+    await saveSounds(ctx.path, [...toAdd, ...existingSounds]);
+    ctx.log(
+      `[soundboard] migration complete: ${toAdd.length} sound(s) added` +
+        (migratedSounds.length - toAdd.length > 0
+          ? `, ${migratedSounds.length - toAdd.length} already present`
+          : '')
+    );
   } else {
-    ctx.log('[soundboard] migration ran but no sounds could be imported (check debug logs for details)');
+    ctx.log('[soundboard] migration ran but no sounds could be imported');
   }
+
+  await writeFile(markerPath, String(Date.now()), 'utf8');
 };
 
 // ---------------------------------------------------------------------------
