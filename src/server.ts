@@ -134,12 +134,17 @@ const parseLegacyPublicJson = (raw: string): TLegacySoundEntry[] => {
 
 const LEGACY_MIGRATION_MARKER = '.legacy-migration-done';
 
+type TLegacyPublicResult = {
+  sounds: TLegacySoundEntry[];
+  publicDir: string; // the directory where the JSON file was found
+};
+
 // Scans the candidate public directories for the mirror files the old plugin
-// wrote, returning the first non-empty sound list found and logging every path
-// tried so failures are easy to diagnose.
+// wrote, returning the sounds and the resolved public directory so audio files
+// can be read from disk instead of fetched over HTTP.
 const findLegacyPublicSounds = async (
   ctx: PluginContext
-): Promise<TLegacySoundEntry[]> => {
+): Promise<TLegacyPublicResult | null> => {
   const envPublicDir = process.env.SHARKORD_PUBLIC_DIR?.trim();
   const publicDirCandidates = [
     envPublicDir,
@@ -158,14 +163,29 @@ const findLegacyPublicSounds = async (
         const raw = await readFile(fullPath, 'utf8');
         const sounds = parseLegacyPublicJson(raw);
         ctx.log(`[soundboard] found legacy file at ${fullPath} (${sounds.length} valid entries)`);
-        if (sounds.length > 0) return sounds;
+        if (sounds.length > 0) return { sounds, publicDir: dir };
       } catch {
         ctx.log(`[soundboard] no legacy file at ${fullPath}`);
       }
     }
   }
 
-  return [];
+  return null;
+};
+
+// Tries to resolve a sourceUrl to a local file path under publicDir.
+// The old plugin served files from the public directory under the URL prefix
+// /public/, so https://host/public/foo.mp3 lives at <publicDir>/foo.mp3.
+const resolvePublicUrlToFilePath = (sourceUrl: string, publicDir: string): string | null => {
+  try {
+    const pathname = new URL(sourceUrl).pathname;
+    // Strip the leading /public/ URL prefix to get the relative file path
+    const relative = pathname.replace(/^\/public\//i, '');
+    if (!relative || relative.includes('..')) return null;
+    return join(publicDir, relative);
+  } catch {
+    return null;
+  }
 };
 
 const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
@@ -211,8 +231,13 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
   }
 
   // Fall back to the public mirror files if settings were empty
+  let legacyPublicDir: string | null = null;
   if (legacySounds.length === 0) {
-    legacySounds = await findLegacyPublicSounds(ctx);
+    const result = await findLegacyPublicSounds(ctx);
+    if (result) {
+      legacySounds = result.sounds;
+      legacyPublicDir = result.publicDir;
+    }
   }
 
   if (legacySounds.length === 0) {
@@ -232,13 +257,30 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
       if (old.dataBase64) {
         fileBuffer = Buffer.from(old.dataBase64, 'base64');
       } else if (old.sourceUrl) {
-        ctx.log(`[soundboard] fetching legacy sound "${old.name}" from ${old.sourceUrl}`);
-        const response = await fetch(old.sourceUrl);
-        if (!response.ok) {
-          ctx.log(`[soundboard] fetch failed for "${old.name}" (HTTP ${response.status}) — skipping`);
-          continue;
+        // Prefer reading from disk — the files live in the same public directory
+        // we already found the JSON in, so an HTTP round-trip is unnecessary and
+        // can fail (e.g. 502) when the server makes requests to itself.
+        if (legacyPublicDir) {
+          const localFilePath = resolvePublicUrlToFilePath(old.sourceUrl, legacyPublicDir);
+          if (localFilePath) {
+            try {
+              fileBuffer = await readFile(localFilePath);
+              ctx.log(`[soundboard] read "${old.name}" from ${localFilePath}`);
+            } catch {
+              ctx.log(`[soundboard] "${old.name}" not at ${localFilePath}, falling back to HTTP`);
+            }
+          }
         }
-        fileBuffer = Buffer.from(await response.arrayBuffer());
+
+        if (!fileBuffer) {
+          ctx.log(`[soundboard] fetching "${old.name}" from ${old.sourceUrl}`);
+          const response = await fetch(old.sourceUrl);
+          if (!response.ok) {
+            ctx.log(`[soundboard] fetch failed for "${old.name}" (HTTP ${response.status}) — skipping`);
+            continue;
+          }
+          fileBuffer = Buffer.from(await response.arrayBuffer());
+        }
       }
 
       if (!fileBuffer) continue;
@@ -282,9 +324,13 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
           : '')
     );
   } else {
-    ctx.log('[soundboard] migration ran but no sounds could be imported');
+    // Don't write the marker — let migration retry on the next startup so that
+    // a transient failure (e.g. a self-request 502) doesn't permanently block it.
+    ctx.log('[soundboard] migration ran but no sounds could be imported; will retry on next startup');
+    return;
   }
 
+  // Only mark done once at least one sound was successfully imported
   await writeFile(markerPath, String(Date.now()), 'utf8');
 };
 
