@@ -250,12 +250,10 @@ const onLoad = async (ctx: PluginContext) => {
   ctx.ui.enable();
   ctx.log('Plugin UI enabled');
 
-  ctx.commands.register({
+  ctx.actions.register({
     name: 'list_sounds',
-    description: 'Returns all shared soundboard sounds.',
-    args: [],
-    async executes() {
-      ctx.debug('Command list_sounds invoked');
+    async execute() {
+      ctx.debug('Action list_sounds invoked');
       const sounds = await soundsCache.get!();
       const payload: TListSoundsResponse = { sounds };
       return payload;
@@ -264,25 +262,18 @@ const onLoad = async (ctx: PluginContext) => {
 
 
 
-  ctx.commands.register({
+  ctx.actions.register({
     name: 'upload_sound',
-    description: 'Upload a new sound to the shared soundboard.',
-    args: [
-      { name: 'name', type: 'string', required: true },
-      { name: 'emoji', type: 'string', required: true },
-      { name: 'url', type: 'string', required: true },
-      { name: 'id', type: 'string', required: false }
-    ],
-    async executes(invokerCtx: TInvokerContext, args: { name: string; emoji: string; url: string; id?: string }) {
-      ctx.debug('Command upload_sound invoked', {
+    async execute(invokerCtx: TInvokerContext, payload: { name: string; emoji: string; url: string; id?: string }) {
+      ctx.debug('Action upload_sound invoked', {
         userId: invokerCtx.userId,
-        name: args.name,
-        emoji: args.emoji,
-        url: args.url
+        name: payload.name,
+        emoji: payload.emoji,
+        url: payload.url
       });
-      const name = args.name.trim();
-      const emoji = args.emoji.trim();
-      const url = args.url.trim();
+      const name = payload.name.trim();
+      const emoji = payload.emoji.trim();
+      const url = payload.url.trim();
 
       if (!name) throw new Error('Sound name is required.');
       if (!emoji) throw new Error('An emoji is required.');
@@ -309,7 +300,7 @@ const onLoad = async (ctx: PluginContext) => {
       }
 
       const sounds = await soundsCache.get!();
-      const soundId = args.id?.trim() || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const soundId = payload.id?.trim() || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
       const nextSound: TSoundEntry = {
         id: soundId,
@@ -328,15 +319,13 @@ const onLoad = async (ctx: PluginContext) => {
     }
   });
 
-  ctx.commands.register({
+  ctx.actions.register({
     name: 'play_sound',
-    description: 'Play a sound in your current voice channel.',
-    args: [{ name: 'soundId', type: 'string', required: true }],
-    async executes(invokerCtx: TInvokerContext, args: { soundId: string }) {
-      ctx.debug('Command play_sound invoked', {
+    async execute(invokerCtx: TInvokerContext, payload: { soundId: string }) {
+      ctx.debug('Action play_sound invoked', {
         userId: invokerCtx.userId,
         currentVoiceChannelId: invokerCtx.currentVoiceChannelId,
-        soundId: args.soundId
+        soundId: payload.soundId
       });
       if (!invokerCtx.currentVoiceChannelId) {
         throw new Error('Join a voice channel before using the soundboard.');
@@ -344,7 +333,7 @@ const onLoad = async (ctx: PluginContext) => {
 
       const channelId = invokerCtx.currentVoiceChannelId;
       const sounds = await soundsCache.get!();
-      const sound = sounds.find((entry) => entry.id === args.soundId);
+      const sound = sounds.find((entry) => entry.id === payload.soundId);
       if (!sound) throw new Error('Sound not found.');
 
       stopPlaybackForUser(ctx, invokerCtx.userId);

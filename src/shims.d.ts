@@ -10,7 +10,11 @@ declare module '@sharkord/plugin-sdk' {
     users?: unknown[];
     selectedChannelId?: number;
     currentVoiceChannelId?: number;
-    sendMessage?: (channelId: number, content: string) => void;
+    ownUserId?: number;
+    executePluginAction: <TResponse = unknown, TPayload = unknown>(
+      actionName: string,
+      payload?: TPayload
+    ) => Promise<TResponse>;
   };
 
   export type TPluginComponentsMapBySlotId = Record<string, React.ComponentType<any>[]>;
@@ -50,6 +54,10 @@ declare module '@sharkord/plugin-sdk' {
       }) => void;
     };
     actions: {
+      register: (action: {
+        name: string;
+        execute: (ctx: TInvokerContext, payload: any) => Promise<unknown> | unknown;
+      }) => void;
       voice: {
         getRouter: (channelId: number) => {
           createPlainTransport: (options: unknown) => Promise<PlainTransport>;
