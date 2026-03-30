@@ -338,8 +338,8 @@ const onLoad = async (ctx: PluginContext) => {
 
       stopPlaybackForUser(ctx, invokerCtx.userId);
 
-      const router = ctx.actions.voice.getRouter(channelId);
-      const { announcedAddress, ip } = ctx.actions.voice.getListenInfo();
+      const router = ctx.voice.getRouter(channelId);
+      const { announcedAddress, ip } = ctx.voice.getListenInfo();
 
       const transport = await router.createPlainTransport({
         listenIp: {
@@ -373,7 +373,7 @@ const onLoad = async (ctx: PluginContext) => {
         }
       });
 
-      const streamHandle = ctx.actions.voice.createStream({
+      const streamHandle = ctx.voice.createStream({
         channelId,
         title: `🔊 ${sound.name}`,
         key: `soundboard-${invokerCtx.userId}`,

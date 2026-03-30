@@ -3,7 +3,8 @@ declare module '@sharkord/plugin-sdk' {
     CONNECT_SCREEN = 'connect_screen',
     HOME_SCREEN = 'home_screen',
     CHAT_ACTIONS = 'chat_actions',
-    TOPBAR_RIGHT = 'topbar_right'
+    TOPBAR_RIGHT = 'topbar_right',
+    FULL_SCREEN = 'full_screen'
   }
 
   export type TPluginSlotContext = {
@@ -34,10 +35,21 @@ declare module '@sharkord/plugin-sdk' {
     produce: (options: unknown) => Promise<Producer>;
   };
 
+  export type TExternalStreamHandle = {
+    streamId: number;
+    remove: () => void;
+    update: (options: {
+      title?: string;
+      avatarUrl?: string;
+      producers?: { audio?: Producer; video?: Producer };
+    }) => void;
+  };
+
   export type PluginContext = {
     path: string;
     log: (...args: unknown[]) => void;
     debug: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
     ui: { enable: () => void; disable: () => void };
     settings: {
       register: <T extends readonly { key: string }[]>(defs: T) => Promise<{
@@ -50,26 +62,33 @@ declare module '@sharkord/plugin-sdk' {
         name: string;
         description?: string;
         args?: { name: string; type: 'string' | 'number' | 'boolean'; required?: boolean }[];
-        executes: (ctx: TInvokerContext, args: any) => Promise<unknown> | unknown;
+        execute: (ctx: TInvokerContext, args: any) => Promise<unknown>;
       }) => void;
     };
     actions: {
       register: (action: {
         name: string;
-        execute: (ctx: TInvokerContext, payload: any) => Promise<unknown> | unknown;
+        description?: string;
+        execute: (ctx: TInvokerContext, payload: any) => Promise<unknown>;
       }) => void;
-      voice: {
-        getRouter: (channelId: number) => {
-          createPlainTransport: (options: unknown) => Promise<PlainTransport>;
-        };
-        getListenInfo: () => { announcedAddress?: string; ip: string };
-        createStream: (opts: {
-          channelId: number;
-          title: string;
-          key: string;
-          producers: { audio?: Producer };
-        }) => { remove: () => void };
+    };
+    voice: {
+      getRouter: (channelId: number) => {
+        createPlainTransport: (options: unknown) => Promise<PlainTransport>;
       };
+      getListenInfo: () => { announcedAddress?: string; ip: string };
+      createStream: (opts: {
+        channelId: number;
+        title: string;
+        key: string;
+        avatarUrl?: string;
+        producers: { audio?: Producer; video?: Producer };
+      }) => TExternalStreamHandle;
+    };
+    messages: {
+      send: (channelId: number, content: string) => Promise<{ messageId: number }>;
+      edit: (messageId: number, content: string) => Promise<void>;
+      delete: (messageId: number) => Promise<void>;
     };
   };
 }
