@@ -6,6 +6,7 @@ import { SoundboardPanel } from './soundboard-panel';
 const SoundboardLauncher = () => {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({});
   const containerRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -14,34 +15,34 @@ const SoundboardLauncher = () => {
     setMounted(true);
   }, []);
 
+  const handleClose = useCallback(() => {
+    setOpen(false);
+    setIsEditing(false);
+  }, []);
+
   const updatePanelPosition = useCallback(() => {
-      const buttonRect = containerRef.current?.getBoundingClientRect();
-      if (!buttonRect) {
-        return;
-      }
+    const buttonRect = containerRef.current?.getBoundingClientRect();
+    if (!buttonRect) return;
 
-      const panelWidth = Math.min(384, window.innerWidth - 16);
-      const left = Math.min(
-        Math.max(8, buttonRect.right - panelWidth),
-        window.innerWidth - panelWidth - 8
-      );
+    const panelWidth = Math.min(384, window.innerWidth - 16);
+    const left = Math.min(
+      Math.max(8, buttonRect.right - panelWidth),
+      window.innerWidth - panelWidth - 8
+    );
+    const top = Math.min(buttonRect.bottom + 8, window.innerHeight - 8);
 
-      const top = Math.min(buttonRect.bottom + 8, window.innerHeight - 8);
-
-      setPanelStyle({
-        position: 'fixed',
-        top,
-        left,
-        width: panelWidth,
-        maxWidth: 'calc(100vw - 1rem)',
-        zIndex: 2147483647
-      });
+    setPanelStyle({
+      position: 'fixed',
+      top,
+      left,
+      width: panelWidth,
+      maxWidth: 'calc(100vw - 1rem)',
+      zIndex: 2147483647
+    });
   }, []);
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
+    if (!open) return;
 
     updatePanelPosition();
 
@@ -49,16 +50,11 @@ const SoundboardLauncher = () => {
       const target = event.target as Node;
       const isLauncherClick = containerRef.current?.contains(target);
       const isPanelClick = panelRef.current?.contains(target);
-
-      if (!isLauncherClick && !isPanelClick) {
-        setOpen(false);
-      }
+      if (!isLauncherClick && !isPanelClick) handleClose();
     };
 
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-      }
+      if (event.key === 'Escape') handleClose();
     };
 
     const handleViewportChange = () => updatePanelPosition();
@@ -74,7 +70,7 @@ const SoundboardLauncher = () => {
       window.removeEventListener('resize', handleViewportChange);
       window.removeEventListener('scroll', handleViewportChange, true);
     };
-  }, [open, updatePanelPosition]);
+  }, [open, handleClose, updatePanelPosition]);
 
   return (
     <div ref={containerRef} className="relative">
@@ -106,18 +102,32 @@ const SoundboardLauncher = () => {
             >
               <div className="flex items-center justify-between border-b px-3 py-2">
                 <p className="text-sm font-medium">Soundboard</p>
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  title="Close Soundboard"
-                  className="rounded px-2 py-1 hover:bg-accent"
-                >
-                  ✕
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing((v) => !v)}
+                    title={isEditing ? 'Done editing' : 'Edit sounds'}
+                    aria-pressed={isEditing}
+                    className={`rounded px-1.5 py-1 hover:bg-accent ${isEditing ? 'bg-accent text-foreground' : 'text-foreground/70'}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClose}
+                    title="Close Soundboard"
+                    className="rounded px-2 py-1 hover:bg-accent"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
 
               <div className="h-[calc(100%-45px)]">
-                <SoundboardPanel />
+                <SoundboardPanel isEditing={isEditing} />
               </div>
             </div>,
             document.body
