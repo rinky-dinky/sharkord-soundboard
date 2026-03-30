@@ -21,9 +21,11 @@ Expected layout:
 ```
 <sharkord-plugins-folder>/
   sharkord-soundboard/
-    server.js
-    client.js
-    package.json
+    manifest.json
+    server/
+      index.js
+    client/
+      index.js
     bin/
       ffmpeg
 ```
