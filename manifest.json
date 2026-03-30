@@ -1,6 +1,8 @@
 {
+  "id": "sharkord-soundboard",
   "name": "sharkord-soundboard",
   "version": "0.0.1",
+  "sdkVersion": 2,
   "entry": {
     "server": "server.js",
     "client": "client.js"
