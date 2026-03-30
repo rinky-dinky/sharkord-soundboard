@@ -446,6 +446,26 @@ const onLoad = async (ctx: PluginContext) => {
   });
 
   ctx.actions.register({
+    name: 'update_sound',
+    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string; name: string; emoji: string }) {
+      const name = payload.name.trim();
+      const emoji = payload.emoji.trim();
+      if (!name) throw new Error('Sound name is required.');
+      if (!emoji) throw new Error('An emoji is required.');
+
+      const sounds = await loadSounds(ctx.path);
+      const idx = sounds.findIndex((entry) => entry.id === payload.soundId);
+      if (idx === -1) throw new Error('Sound not found.');
+
+      sounds[idx] = { ...sounds[idx], name, emoji };
+      await saveSounds(ctx.path, sounds);
+
+      const { localPath: _localPath, ...updated } = sounds[idx];
+      return updated;
+    }
+  });
+
+  ctx.actions.register({
     name: 'play_sound',
     async execute(invokerCtx: TInvokerContext, payload: { soundId: string }) {
       ctx.debug('Action play_sound invoked', {

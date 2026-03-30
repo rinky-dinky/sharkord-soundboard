@@ -13,6 +13,165 @@ const EMOJI_OPTIONS = [
   '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️'
 ];
 
+const EmojiPicker = ({
+  value,
+  onChange
+}: {
+  value: string;
+  onChange: (emoji: string) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="Pick emoji"
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border text-lg hover:bg-accent"
+      >
+        {value}
+      </button>
+      {open ? (
+        <div className="grid grid-cols-8 gap-1 rounded border p-2">
+          {EMOJI_OPTIONS.map((candidate) => (
+            <button
+              key={candidate}
+              type="button"
+              className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
+              onClick={() => {
+                onChange(candidate);
+                setOpen(false);
+              }}
+            >
+              {candidate}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+// Each card handles its own edit / delete-confirm state independently.
+const SoundCard = ({
+  sound,
+  disabled,
+  onDelete,
+  onUpdate
+}: {
+  sound: TSoundInfo;
+  disabled: boolean;
+  onDelete: () => Promise<void>;
+  onUpdate: (name: string, emoji: string) => Promise<void>;
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(sound.name);
+  const [editEmoji, setEditEmoji] = useState(sound.emoji);
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setEditName(sound.name);
+    setEditEmoji(sound.emoji);
+  }, [sound.name, sound.emoji]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteTimerRef.current !== null) clearTimeout(deleteTimerRef.current);
+    };
+  }, []);
+
+  const handleDeleteClick = async () => {
+    if (!deleteArmed) {
+      setDeleteArmed(true);
+      deleteTimerRef.current = setTimeout(() => setDeleteArmed(false), 3000);
+    } else {
+      if (deleteTimerRef.current !== null) clearTimeout(deleteTimerRef.current);
+      setDeleteArmed(false);
+      await onDelete();
+    }
+  };
+
+  const handleSave = async () => {
+    const trimmed = editName.trim();
+    if (!trimmed) return;
+    await onUpdate(trimmed, editEmoji);
+    setEditing(false);
+  };
+
+  const handleCancel = () => {
+    setEditName(sound.name);
+    setEditEmoji(sound.emoji);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-2 rounded border p-2">
+        <div className="flex gap-1 items-center">
+          <EmojiPicker value={editEmoji} onChange={setEditEmoji} />
+          <input
+            value={editName}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditName(e.target.value)}
+            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+              if (e.key === 'Enter') handleSave().catch(() => {});
+              if (e.key === 'Escape') handleCancel();
+            }}
+            className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1 text-sm"
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+          />
+        </div>
+        <div className="flex gap-1">
+          <button
+            type="button"
+            disabled={!editName.trim() || disabled}
+            onClick={() => handleSave().catch(() => {})}
+            className="flex-1 rounded border px-2 py-0.5 text-xs disabled:opacity-50"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="flex-1 rounded border px-2 py-0.5 text-xs opacity-60 hover:opacity-100"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded border p-2">
+      <span className="truncate text-sm leading-snug">{sound.emoji} {sound.name}</span>
+      <div className="flex gap-1">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setEditing(true)}
+          className="flex-1 rounded border px-2 py-0.5 text-xs opacity-60 hover:opacity-100 disabled:opacity-50"
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => handleDeleteClick().catch(() => {})}
+          className={`flex-1 rounded border px-2 py-0.5 text-xs disabled:opacity-50 ${
+            deleteArmed ? 'border-red-500 text-red-500' : 'opacity-60 hover:opacity-100'
+          }`}
+        >
+          {deleteArmed ? 'Confirm?' : 'Delete'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const useSharkordStore = () => {
   const store = window.__SHARKORD_STORE__;
   const [state, setState] = useState(() => store.getState());
@@ -24,49 +183,6 @@ const useSharkordStore = () => {
   return { state, actions: store.actions };
 };
 
-// Two-tap confirm delete: first click arms (shows "Confirm?"), second click
-// within 3 s actually deletes; otherwise auto-disarms.
-const DeleteButton = ({
-  onDelete,
-  disabled
-}: {
-  onDelete: () => Promise<void>;
-  disabled: boolean;
-}) => {
-  const [armed, setArmed] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) clearTimeout(timerRef.current);
-    };
-  }, []);
-
-  const handleClick = async () => {
-    if (!armed) {
-      setArmed(true);
-      timerRef.current = setTimeout(() => setArmed(false), 3000);
-    } else {
-      if (timerRef.current !== null) clearTimeout(timerRef.current);
-      setArmed(false);
-      await onDelete();
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={handleClick}
-      className={`shrink-0 rounded border px-2 py-0.5 text-xs disabled:opacity-50 ${
-        armed ? 'border-red-500 text-red-500' : 'opacity-60 hover:opacity-100'
-      }`}
-    >
-      {armed ? 'Confirm?' : 'Delete'}
-    </button>
-  );
-};
-
 const SoundboardPanel = () => {
   const { state, actions } = useSharkordStore();
   const { currentVoiceChannelId } = state;
@@ -76,7 +192,6 @@ const SoundboardPanel = () => {
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState('🦈');
   const [file, setFile] = useState<File | null>(null);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -129,7 +244,6 @@ const SoundboardPanel = () => {
       setSounds((prev) => [newSound, ...prev.filter((item) => item.id !== newSound.id)]);
       setFile(null);
       setName('');
-      setShowEmojiPicker(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -146,7 +260,6 @@ const SoundboardPanel = () => {
         await executePluginAction('play_sound', { soundId });
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-
         if (/sound not found/i.test(message)) {
           setSounds((prev) => prev.filter((entry) => entry.id !== soundId));
           setError('That sound no longer exists and was removed from your local list.');
@@ -166,6 +279,19 @@ const SoundboardPanel = () => {
       try {
         await executePluginAction('delete_sound', { soundId });
         setSounds((prev) => prev.filter((entry) => entry.id !== soundId));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [executePluginAction]
+  );
+
+  const onUpdate = useCallback(
+    async (soundId: string, name: string, emoji: string) => {
+      setError(null);
+      try {
+        const updated = await executePluginAction<TSoundInfo>('update_sound', { soundId, name, emoji });
+        setSounds((prev) => prev.map((s) => (s.id === soundId ? updated : s)));
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -207,34 +333,8 @@ const SoundboardPanel = () => {
               placeholder="Sound name"
               className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1"
             />
-            <button
-              type="button"
-              className="inline-flex h-9 min-h-9 w-9 min-w-9 shrink-0 items-center justify-center rounded border p-0 text-xl leading-none hover:bg-accent"
-              onClick={() => setShowEmojiPicker((v) => !v)}
-              title="Pick emoji"
-              aria-label="Pick emoji"
-              aria-expanded={showEmojiPicker}
-            >
-              {emoji || '😀'}
-            </button>
+            <EmojiPicker value={emoji} onChange={setEmoji} />
           </div>
-          {showEmojiPicker ? (
-            <div className="grid grid-cols-8 gap-1 rounded border p-2">
-              {EMOJI_OPTIONS.map((candidate) => (
-                <button
-                  key={candidate}
-                  type="button"
-                  className={`rounded px-1 py-1 text-lg hover:bg-accent ${emoji === candidate ? 'bg-accent' : ''}`}
-                  onClick={() => {
-                    setEmoji(candidate);
-                    setShowEmojiPicker(false);
-                  }}
-                >
-                  {candidate}
-                </button>
-              ))}
-            </div>
-          ) : null}
           <input
             ref={fileInputRef}
             type="file"
@@ -255,20 +355,23 @@ const SoundboardPanel = () => {
           </button>
         </div>
 
-        {/* Existing sounds list */}
-        <div className="mt-3 flex flex-col gap-1">
+        {/* Existing sounds grid */}
+        <div className="mt-3 flex flex-col gap-2">
           <p className="text-xs font-medium opacity-60 uppercase tracking-wide">Existing Sounds</p>
           {sounds.length === 0 ? (
-            <p className="mt-1 text-sm opacity-60">No sounds yet.</p>
+            <p className="text-sm opacity-60">No sounds yet.</p>
           ) : (
-            sounds.map((sound) => (
-              <div key={sound.id} className="flex items-center gap-2 py-0.5">
-                <span className="min-w-0 flex-1 truncate text-sm">
-                  {sound.emoji} {sound.name}
-                </span>
-                <DeleteButton disabled={loading} onDelete={() => onDelete(sound.id)} />
-              </div>
-            ))
+            <div className="grid grid-cols-2 gap-2">
+              {sounds.map((sound) => (
+                <SoundCard
+                  key={sound.id}
+                  sound={sound}
+                  disabled={loading}
+                  onDelete={() => onDelete(sound.id)}
+                  onUpdate={(n, e) => onUpdate(sound.id, n, e)}
+                />
+              ))}
+            </div>
           )}
         </div>
       </details>
