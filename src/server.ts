@@ -1,15 +1,15 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { access, mkdir, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
-import { type TListSoundsResponse, type TSoundEntry } from './types';
+import type { TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from './types';
 
-const SOUNDS_SETTINGS_KEY = 'soundsJson';
-const PUBLIC_MIRROR_FILENAME_SETTINGS_KEY = 'publicMirrorFileName';
 const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 2;
 const RTP_AUDIO_PAYLOAD_TYPE = 111;
+
+const getSoundsDir = (pluginPath: string) => join(pluginPath, 'sounds');
+const getSoundsJsonPath = (pluginPath: string) => join(getSoundsDir(pluginPath), 'sounds.json');
 
 const getFfmpegBinaryPath = (pluginPath: string) => {
   const binaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
@@ -18,7 +18,6 @@ const getFfmpegBinaryPath = (pluginPath: string) => {
 
 const assertFfmpegBinary = async (pluginPath: string) => {
   const ffmpegPath = getFfmpegBinaryPath(pluginPath);
-
   try {
     await access(ffmpegPath, fsConstants.X_OK);
     return ffmpegPath;
@@ -30,6 +29,313 @@ const assertFfmpegBinary = async (pluginPath: string) => {
   }
 };
 
+const loadSounds = async (pluginPath: string): Promise<TSoundEntry[]> => {
+  try {
+    const raw = await readFile(getSoundsJsonPath(pluginPath), 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is TSoundEntry =>
+        entry !== null &&
+        typeof entry === 'object' &&
+        typeof entry.id === 'string' &&
+        typeof entry.name === 'string' &&
+        typeof entry.emoji === 'string' &&
+        typeof entry.mimeType === 'string' &&
+        typeof entry.localPath === 'string' &&
+        typeof entry.createdByUserId === 'number' &&
+        typeof entry.createdAt === 'number'
+    );
+  } catch {
+    return [];
+  }
+};
+
+const saveSounds = async (pluginPath: string, sounds: TSoundEntry[]): Promise<void> => {
+  await writeFile(getSoundsJsonPath(pluginPath), JSON.stringify(sounds, null, 2), 'utf8');
+};
+
+const getExtFromMimeType = (mimeType: string): string => {
+  if (mimeType.includes('ogg')) return 'ogg';
+  if (mimeType.includes('wav')) return 'wav';
+  if (mimeType.includes('flac')) return 'flac';
+  if (mimeType.includes('aac')) return 'aac';
+  return 'mp3';
+};
+
+// ---------------------------------------------------------------------------
+// Legacy migration
+//
+// v0.0.2 and earlier had two possible data sources:
+//
+//  1. Plugin settings key "soundsJson" — a JSON string of a plain TSoundEntry
+//     array: [{id, name, emoji, mimeType, sourceUrl?, dataBase64?, ...}, ...]
+//
+//  2. Public mirror files written by syncPublicSoundsMirror — wrapped in an
+//     object: {"sounds":[...]}
+//     Candidates: <public>/soundboard-sounds.json
+//                 <public>/soundboard/sounds.json
+//     Where <public> was probed as: $SHARKORD_PUBLIC_DIR, <plugin>/../../public,
+//     <plugin>/../public, /public
+//
+// The settings value is often empty after a server restart (it may not have
+// been persisted), so we fall back to reading the public mirror files which
+// the user confirmed exist on disk.
+// ---------------------------------------------------------------------------
+
+type TLegacySoundEntry = {
+  id: string;
+  name: string;
+  emoji: string;
+  mimeType: string;
+  sourceUrl?: string;
+  dataBase64?: string;
+  createdByUserId: number;
+  createdAt: number;
+};
+
+const isValidLegacyEntry = (entry: unknown): entry is TLegacySoundEntry =>
+  entry !== null &&
+  typeof entry === 'object' &&
+  typeof (entry as Record<string, unknown>).id === 'string' &&
+  typeof (entry as Record<string, unknown>).name === 'string' &&
+  typeof (entry as Record<string, unknown>).emoji === 'string' &&
+  typeof (entry as Record<string, unknown>).mimeType === 'string' &&
+  typeof (entry as Record<string, unknown>).createdByUserId === 'number' &&
+  typeof (entry as Record<string, unknown>).createdAt === 'number' &&
+  (
+    typeof (entry as Record<string, unknown>).sourceUrl === 'string' ||
+    typeof (entry as Record<string, unknown>).dataBase64 === 'string'
+  );
+
+// Parses the plain-array format stored in settings: [{...}, ...]
+const parseLegacySettingsArray = (raw: string): TLegacySoundEntry[] => {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isValidLegacyEntry);
+  } catch {
+    return [];
+  }
+};
+
+// Parses the wrapped format written by the public mirror: {"sounds":[{...}, ...]}
+const parseLegacyPublicJson = (raw: string): TLegacySoundEntry[] => {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+    const arr = (parsed as Record<string, unknown>).sounds;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(isValidLegacyEntry);
+  } catch {
+    return [];
+  }
+};
+
+const LEGACY_MIGRATION_MARKER = '.legacy-migration-done';
+
+type TLegacyPublicResult = {
+  sounds: TLegacySoundEntry[];
+  publicDir: string; // the directory where the JSON file was found
+};
+
+// Scans the candidate public directories for the mirror files the old plugin
+// wrote, returning the sounds and the resolved public directory so audio files
+// can be read from disk instead of fetched over HTTP.
+const findLegacyPublicSounds = async (
+  ctx: PluginContext
+): Promise<TLegacyPublicResult | null> => {
+  const envPublicDir = process.env.SHARKORD_PUBLIC_DIR?.trim();
+  const publicDirCandidates = [
+    envPublicDir,
+    join(ctx.path, '..', '..', 'public'),
+    join(ctx.path, '..', 'public'),
+    '/public'
+  ].filter((v): v is string => Boolean(v));
+
+  // The old code wrote to both of these paths inside the public dir
+  const relativeFilenames = ['soundboard-sounds.json', join('soundboard', 'sounds.json')];
+
+  for (const dir of publicDirCandidates) {
+    for (const rel of relativeFilenames) {
+      const fullPath = join(dir, rel);
+      try {
+        const raw = await readFile(fullPath, 'utf8');
+        const sounds = parseLegacyPublicJson(raw);
+        ctx.log(`[soundboard] found legacy file at ${fullPath} (${sounds.length} valid entries)`);
+        if (sounds.length > 0) return { sounds, publicDir: dir };
+      } catch {
+        ctx.log(`[soundboard] no legacy file at ${fullPath}`);
+      }
+    }
+  }
+
+  return null;
+};
+
+// Tries to resolve a sourceUrl to a local file path under publicDir.
+// The old plugin served files from the public directory under the URL prefix
+// /public/, so https://host/public/foo.mp3 lives at <publicDir>/foo.mp3.
+const resolvePublicUrlToFilePath = (sourceUrl: string, publicDir: string): string | null => {
+  try {
+    const pathname = new URL(sourceUrl).pathname;
+    // Strip the leading /public/ URL prefix to get the relative file path
+    const relative = pathname.replace(/^\/public\//i, '');
+    if (!relative || relative.includes('..')) return null;
+    return join(publicDir, relative);
+  } catch {
+    return null;
+  }
+};
+
+const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
+  // Use a dedicated marker file so this gate is independent of sounds.json.
+  // sounds.json is created whenever a new sound is uploaded, which would
+  // otherwise cause the migration to be silently skipped on every restart.
+  const markerPath = join(getSoundsDir(ctx.path), LEGACY_MIGRATION_MARKER);
+  try {
+    await access(markerPath, fsConstants.F_OK);
+    ctx.log('[soundboard] legacy migration already completed, skipping');
+    return;
+  } catch {
+    // marker absent — proceed
+  }
+
+  ctx.log('[soundboard] checking for legacy sounds to migrate…');
+
+  // Try settings first (plain JSON array stored under key "soundsJson")
+  let legacySounds: TLegacySoundEntry[] = [];
+
+  try {
+    const legacySettings = await ctx.settings.register([
+      {
+        key: 'soundsJson',
+        name: 'Legacy soundboard data (JSON)',
+        description: 'Managed by the soundboard plugin. Migrated automatically to the plugin directory.',
+        type: 'string',
+        defaultValue: '[]'
+      }
+    ] as const);
+
+    const raw = await legacySettings.get('soundsJson');
+    legacySounds = parseLegacySettingsArray(raw);
+
+    if (legacySounds.length > 0) {
+      ctx.log(`[soundboard] found ${legacySounds.length} sound(s) in legacy settings`);
+      legacySettings.set('soundsJson', '[]');
+    } else {
+      ctx.log('[soundboard] legacy settings key is empty, trying public mirror files…');
+    }
+  } catch (error) {
+    ctx.log(`[soundboard] could not read legacy settings (${String(error)}), trying public mirror files…`);
+  }
+
+  // Fall back to the public mirror files if settings were empty
+  let legacyPublicDir: string | null = null;
+  if (legacySounds.length === 0) {
+    const result = await findLegacyPublicSounds(ctx);
+    if (result) {
+      legacySounds = result.sounds;
+      legacyPublicDir = result.publicDir;
+    }
+  }
+
+  if (legacySounds.length === 0) {
+    ctx.log('[soundboard] no legacy sounds found — writing migration marker and continuing');
+    await writeFile(markerPath, String(Date.now()), 'utf8');
+    return;
+  }
+
+  ctx.log(`[soundboard] migrating ${legacySounds.length} legacy sound(s) to plugin directory…`);
+
+  const migratedSounds: TSoundEntry[] = [];
+
+  for (const old of legacySounds) {
+    try {
+      let fileBuffer: Buffer | null = null;
+
+      if (old.dataBase64) {
+        fileBuffer = Buffer.from(old.dataBase64, 'base64');
+      } else if (old.sourceUrl) {
+        // Prefer reading from disk — the files live in the same public directory
+        // we already found the JSON in, so an HTTP round-trip is unnecessary and
+        // can fail (e.g. 502) when the server makes requests to itself.
+        if (legacyPublicDir) {
+          const localFilePath = resolvePublicUrlToFilePath(old.sourceUrl, legacyPublicDir);
+          if (localFilePath) {
+            try {
+              fileBuffer = await readFile(localFilePath);
+              ctx.log(`[soundboard] read "${old.name}" from ${localFilePath}`);
+            } catch {
+              ctx.log(`[soundboard] "${old.name}" not at ${localFilePath}, falling back to HTTP`);
+            }
+          }
+        }
+
+        if (!fileBuffer) {
+          ctx.log(`[soundboard] fetching "${old.name}" from ${old.sourceUrl}`);
+          const response = await fetch(old.sourceUrl);
+          if (!response.ok) {
+            ctx.log(`[soundboard] fetch failed for "${old.name}" (HTTP ${response.status}) — skipping`);
+            continue;
+          }
+          fileBuffer = Buffer.from(await response.arrayBuffer());
+        }
+      }
+
+      if (!fileBuffer) continue;
+
+      if (fileBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
+        ctx.log(`[soundboard] "${old.name}" exceeds size limit — skipping`);
+        continue;
+      }
+
+      const ext = getExtFromMimeType(old.mimeType);
+      const localPath = join(getSoundsDir(ctx.path), `${old.id}.${ext}`);
+      await writeFile(localPath, fileBuffer);
+
+      migratedSounds.push({
+        id: old.id,
+        name: old.name,
+        emoji: old.emoji,
+        mimeType: old.mimeType,
+        localPath,
+        createdByUserId: old.createdByUserId,
+        createdAt: old.createdAt
+      });
+
+      ctx.log(`[soundboard] migrated "${old.name}" (${old.id})`);
+    } catch (error) {
+      ctx.log(`[soundboard] error migrating "${old.name}": ${String(error)}`);
+    }
+  }
+
+  // Merge with any sounds already in the new system (old sounds first so
+  // they keep their original order; skip any whose id already exists)
+  if (migratedSounds.length > 0) {
+    const existingSounds = await loadSounds(ctx.path);
+    const existingIds = new Set(existingSounds.map((s) => s.id));
+    const toAdd = migratedSounds.filter((s) => !existingIds.has(s.id));
+    await saveSounds(ctx.path, [...toAdd, ...existingSounds]);
+    ctx.log(
+      `[soundboard] migration complete: ${toAdd.length} sound(s) added` +
+        (migratedSounds.length - toAdd.length > 0
+          ? `, ${migratedSounds.length - toAdd.length} already present`
+          : '')
+    );
+  } else {
+    // Don't write the marker — let migration retry on the next startup so that
+    // a transient failure (e.g. a self-request 502) doesn't permanently block it.
+    ctx.log('[soundboard] migration ran but no sounds could be imported; will retry on next startup');
+    return;
+  }
+
+  // Only mark done once at least one sound was successfully imported
+  await writeFile(markerPath, String(Date.now()), 'utf8');
+};
+
+// ---------------------------------------------------------------------------
+
 type TRuntimePlayback = {
   producer: Producer;
   transport: PlainTransport;
@@ -37,161 +343,7 @@ type TRuntimePlayback = {
   ffmpegPid?: number;
 };
 
-const soundsCache: { get: (() => Promise<TSoundEntry[]>) | null; set: ((sounds: TSoundEntry[]) => Promise<void>) | null } = {
-  get: null,
-  set: null
-};
 const activePlaybackByUser = new Map<number, TRuntimePlayback>();
-
-type TPublicWriteProbeResult = {
-  ok: boolean;
-  baseDir: string | null;
-  mirrorUrls: string[];
-  tried: string[];
-  error?: string;
-};
-
-let publicWriteProbeResult: TPublicWriteProbeResult = {
-  ok: false,
-  baseDir: null,
-  mirrorUrls: [],
-  tried: []
-};
-
-let getConfiguredMirrorFileName: (() => Promise<string | null>) | null = null;
-
-const sanitizeMirrorFileName = (value: string | null | undefined) => {
-  if (!value) return null;
-
-  const normalized = basename(value.trim());
-  if (!normalized || normalized === '.' || normalized === '..') return null;
-  return normalized;
-};
-
-const getPublicSoundsMirrorPaths = async () => {
-  if (!publicWriteProbeResult.ok || !publicWriteProbeResult.baseDir) {
-    return { paths: [] as string[], urls: [] as string[] };
-  }
-
-  const baseDir = publicWriteProbeResult.baseDir;
-  const publicDir = dirname(baseDir);
-  const configuredFileName = sanitizeMirrorFileName(await getConfiguredMirrorFileName?.());
-
-  const entries = [
-    { path: join(baseDir, 'sounds.json'), url: '/public/soundboard/sounds.json' },
-    { path: join(publicDir, 'soundboard-sounds.json'), url: '/public/soundboard-sounds.json' },
-    configuredFileName
-      ? { path: join(publicDir, configuredFileName), url: `/public/${encodeURIComponent(configuredFileName)}` }
-      : null
-  ].filter((entry): entry is { path: string; url: string } => Boolean(entry));
-
-  const dedupe = new Map<string, string>();
-  for (const entry of entries) {
-    if (!dedupe.has(entry.path)) dedupe.set(entry.path, entry.url);
-  }
-
-  return {
-    paths: Array.from(dedupe.keys()),
-    urls: Array.from(dedupe.values())
-  };
-};
-
-const syncPublicSoundsMirror = async (ctx: PluginContext, sounds: TSoundEntry[]) => {
-  const { paths, urls } = await getPublicSoundsMirrorPaths();
-  if (paths.length === 0) return;
-
-  const payload = JSON.stringify({ sounds });
-
-  for (const mirrorPath of paths) {
-    try {
-      await writeFile(mirrorPath, payload, 'utf8');
-    } catch (error) {
-      ctx.debug('[soundboard] could not write public sounds mirror', { mirrorPath, error });
-    }
-  }
-
-  publicWriteProbeResult = {
-    ...publicWriteProbeResult,
-    mirrorUrls: urls
-  };
-};
-
-const parseSounds = (raw: unknown): TSoundEntry[] => {
-  if (typeof raw !== 'string' || raw.length === 0) return [];
-
-  try {
-    const parsed = JSON.parse(raw) as TSoundEntry[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((entry) =>
-      entry &&
-      typeof entry.id === 'string' &&
-      typeof entry.name === 'string' &&
-      typeof entry.emoji === 'string' &&
-      typeof entry.mimeType === 'string' &&
-      (typeof entry.sourceUrl === 'string' || typeof entry.dataBase64 === 'string') &&
-      typeof entry.createdByUserId === 'number' &&
-      typeof entry.createdAt === 'number'
-    );
-  } catch {
-    return [];
-  }
-};
-
-
-const probePublicWriteAccess = async (ctx: PluginContext): Promise<TPublicWriteProbeResult> => {
-  const envPublicDir = process.env.SHARKORD_PUBLIC_DIR?.trim();
-  const candidates = [
-    envPublicDir,
-    join(ctx.path, '..', '..', 'public'),
-    join(ctx.path, '..', 'public'),
-    '/public'
-  ].filter((value): value is string => Boolean(value));
-
-  const tried: string[] = [];
-
-  for (const candidate of candidates) {
-    const baseDir = join(candidate, 'soundboard');
-    const probePath = join(baseDir, 'write-probe.json');
-
-    try {
-      tried.push(baseDir);
-      await mkdir(baseDir, { recursive: true });
-      await access(baseDir, fsConstants.W_OK);
-      await writeFile(
-        probePath,
-        JSON.stringify({ ok: true, createdAt: Date.now(), pluginPath: ctx.path })
-      );
-      await rm(probePath, { force: true });
-
-      const result: TPublicWriteProbeResult = {
-        ok: true,
-        baseDir,
-        mirrorUrls: [],
-        tried
-      };
-      publicWriteProbeResult = result;
-      ctx.log(`[soundboard] public write probe succeeded at: ${baseDir}`);
-      return result;
-    } catch (error) {
-      ctx.debug(`[soundboard] public write probe failed at: ${baseDir}`, error);
-    }
-  }
-
-  const result: TPublicWriteProbeResult = {
-    ok: false,
-    baseDir: null,
-    mirrorUrls: [],
-    tried,
-    error: 'No writable public/soundboard directory found.'
-  };
-
-  publicWriteProbeResult = result;
-  ctx.log(
-    `[soundboard] public write probe failed for all candidate paths. Tried: ${tried.join(', ') || 'none'}`
-  );
-
-  return result;
-};
 
 const stopPlaybackForUser = (ctx: PluginContext, userId: number) => {
   const playback = activePlaybackByUser.get(userId);
@@ -214,108 +366,102 @@ const stopPlaybackForUser = (ctx: PluginContext, userId: number) => {
 
 const onLoad = async (ctx: PluginContext) => {
   ctx.log('Soundboard plugin loaded');
-  ctx.log('Initializing soundboard plugin UI and command handlers');
+
   const ffmpegBinaryPath = await assertFfmpegBinary(ctx.path);
   ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
-  await probePublicWriteAccess(ctx);
 
-  const settings = await ctx.settings.register([
-    {
-      key: SOUNDS_SETTINGS_KEY,
-      name: 'Shared soundboard data (JSON)',
-      description: 'Managed by the soundboard plugin. Do not edit manually.',
-      type: 'string',
-      defaultValue: '[]'
-    },
-    {
-      key: PUBLIC_MIRROR_FILENAME_SETTINGS_KEY,
-      name: 'Public mirror filename',
-      description: 'Optional. Public filename to mirror sounds JSON into (for example: uploaded-sounds.json).',
-      type: 'string',
-      defaultValue: 'soundboard-sounds.json'
-    }
-  ] as const);
+  await mkdir(getSoundsDir(ctx.path), { recursive: true });
+  await migrateLegacy(ctx);
 
-  getConfiguredMirrorFileName = async () => settings.get(PUBLIC_MIRROR_FILENAME_SETTINGS_KEY);
-
-  soundsCache.get = async () => parseSounds(await settings.get(SOUNDS_SETTINGS_KEY));
-  soundsCache.set = async (sounds: TSoundEntry[]) => {
-    await settings.set(SOUNDS_SETTINGS_KEY, JSON.stringify(sounds));
-    await syncPublicSoundsMirror(ctx, sounds);
-  };
-
-  await syncPublicSoundsMirror(ctx, await soundsCache.get());
-
-  ctx.log('Enabling plugin UI components');
   ctx.ui.enable();
-  ctx.log('Plugin UI enabled');
 
   ctx.actions.register({
     name: 'list_sounds',
     async execute() {
-      ctx.debug('Action list_sounds invoked');
-      const sounds = await soundsCache.get!();
-      const payload: TListSoundsResponse = { sounds };
-      return payload;
+      const sounds = await loadSounds(ctx.path);
+      const response: TListSoundsResponse = {
+        sounds: sounds.map(({ localPath: _localPath, ...rest }) => rest)
+      };
+      return response;
     }
   });
 
-
-
   ctx.actions.register({
     name: 'upload_sound',
-    async execute(invokerCtx: TInvokerContext, payload: { name: string; emoji: string; url: string; id?: string }) {
-      ctx.debug('Action upload_sound invoked', {
-        userId: invokerCtx.userId,
-        name: payload.name,
-        emoji: payload.emoji,
-        url: payload.url
-      });
+    async execute(invokerCtx: TInvokerContext, payload: TUploadSoundPayload) {
       const name = payload.name.trim();
       const emoji = payload.emoji.trim();
-      const url = payload.url.trim();
+      const { fileData, mimeType } = payload;
 
       if (!name) throw new Error('Sound name is required.');
       if (!emoji) throw new Error('An emoji is required.');
-      if (!url) throw new Error('A file URL is required.');
-      if (!/^https?:\/\//i.test(url)) throw new Error('URL must start with http:// or https://');
+      if (!fileData) throw new Error('An audio file is required.');
 
-      let mimeType = 'audio/mpeg';
-
-      try {
-        const headResponse = await fetch(url, { method: 'HEAD' });
-        if (headResponse.ok) {
-          const contentLength = headResponse.headers.get('content-length');
-          if (contentLength && Number(contentLength) > MAX_FILE_SIZE_BYTES) {
-            throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
-          }
-
-          const rawContentType = headResponse.headers.get('content-type');
-          if (rawContentType) {
-            mimeType = rawContentType.split(';')[0]?.trim() || mimeType;
-          }
-        }
-      } catch (error) {
-        ctx.debug('Could not validate sound URL via HEAD request, continuing with URL reference', error);
+      const fileBuffer = Buffer.from(fileData, 'base64');
+      if (fileBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
+        throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
       }
 
-      const sounds = await soundsCache.get!();
       const soundId = payload.id?.trim() || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const ext = getExtFromMimeType(mimeType);
+      const localPath = join(getSoundsDir(ctx.path), `${soundId}.${ext}`);
 
-      const nextSound: TSoundEntry = {
+      await writeFile(localPath, fileBuffer);
+
+      const sounds = await loadSounds(ctx.path);
+      const newEntry: TSoundEntry = {
         id: soundId,
         name,
         emoji,
         mimeType,
-        sourceUrl: url,
+        localPath,
         createdByUserId: invokerCtx.userId,
         createdAt: Date.now()
       };
 
-      sounds.push(nextSound);
-      await soundsCache.set!(sounds);
+      sounds.push(newEntry);
+      await saveSounds(ctx.path, sounds);
 
-      return nextSound;
+      const { localPath: _localPath, ...newEntryInfo } = newEntry;
+      return newEntryInfo;
+    }
+  });
+
+  ctx.actions.register({
+    name: 'delete_sound',
+    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string }) {
+      const sounds = await loadSounds(ctx.path);
+      const sound = sounds.find((entry) => entry.id === payload.soundId);
+      if (!sound) throw new Error('Sound not found.');
+
+      try {
+        await unlink(sound.localPath);
+      } catch {
+        // File may already be gone; continue with removing from index
+      }
+
+      await saveSounds(ctx.path, sounds.filter((entry) => entry.id !== payload.soundId));
+      return { ok: true };
+    }
+  });
+
+  ctx.actions.register({
+    name: 'update_sound',
+    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string; name: string; emoji: string }) {
+      const name = payload.name.trim();
+      const emoji = payload.emoji.trim();
+      if (!name) throw new Error('Sound name is required.');
+      if (!emoji) throw new Error('An emoji is required.');
+
+      const sounds = await loadSounds(ctx.path);
+      const idx = sounds.findIndex((entry) => entry.id === payload.soundId);
+      if (idx === -1) throw new Error('Sound not found.');
+
+      sounds[idx] = { ...sounds[idx], name, emoji };
+      await saveSounds(ctx.path, sounds);
+
+      const { localPath: _localPath, ...updated } = sounds[idx];
+      return updated;
     }
   });
 
@@ -327,12 +473,13 @@ const onLoad = async (ctx: PluginContext) => {
         currentVoiceChannelId: invokerCtx.currentVoiceChannelId,
         soundId: payload.soundId
       });
+
       if (!invokerCtx.currentVoiceChannelId) {
         throw new Error('Join a voice channel before using the soundboard.');
       }
 
       const channelId = invokerCtx.currentVoiceChannelId;
-      const sounds = await soundsCache.get!();
+      const sounds = await loadSounds(ctx.path);
       const sound = sounds.find((entry) => entry.id === payload.soundId);
       if (!sound) throw new Error('Sound not found.');
 
@@ -380,61 +527,27 @@ const onLoad = async (ctx: PluginContext) => {
         producers: { audio: producer }
       });
 
-      const tmpDir = join(tmpdir(), 'sharkord-soundboard');
-      await mkdir(tmpDir, { recursive: true });
-      const fileExt = sound.mimeType.includes('ogg') ? 'ogg' : sound.mimeType.includes('wav') ? 'wav' : 'mp3';
-      const inputPath = join(tmpDir, `sound-${invokerCtx.userId}-${Date.now()}.${fileExt}`);
-
-      if (sound.sourceUrl) {
-        const response = await fetch(sound.sourceUrl);
-        if (!response.ok) {
-          throw new Error(`Could not fetch sound URL for playback (HTTP ${response.status}).`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        if (arrayBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
-          throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
-        }
-
-        await writeFile(inputPath, Buffer.from(arrayBuffer));
-      } else if (sound.dataBase64) {
-        await writeFile(inputPath, Buffer.from(sound.dataBase64, 'base64'));
-      } else {
-        throw new Error('Sound has no playable source.');
-      }
-
-      const inputSource = inputPath;
-
       const ffmpeg = spawn(ffmpegBinaryPath, [
         '-re',
-        '-i',
-        inputSource,
+        '-i', sound.localPath,
         '-vn',
-        '-ac',
-        '2',
-        '-ar',
-        '48000',
-        '-c:a',
-        'libopus',
-        '-application',
-        'audio',
-        '-payload_type',
-        `${RTP_AUDIO_PAYLOAD_TYPE}`,
-        '-ssrc',
-        `${audioSsrc}`,
-        '-f',
-        'rtp',
+        '-ac', '2',
+        '-ar', '48000',
+        '-c:a', 'libopus',
+        '-application', 'audio',
+        '-payload_type', `${RTP_AUDIO_PAYLOAD_TYPE}`,
+        '-ssrc', `${audioSsrc}`,
+        '-f', 'rtp',
         `rtp://${ip}:${transport.tuple.localPort}?pkt_size=1200`
       ]);
 
-      const playback: TRuntimePlayback = {
+      activePlaybackByUser.set(invokerCtx.userId, {
         producer,
         transport,
         streamHandleRemove: streamHandle.remove,
         ffmpegPid: ffmpeg.pid
-      };
+      });
 
-      activePlaybackByUser.set(invokerCtx.userId, playback);
       ctx.log('Started ffmpeg playback', {
         userId: invokerCtx.userId,
         channelId,
@@ -445,12 +558,8 @@ const onLoad = async (ctx: PluginContext) => {
         ctx.debug('ffmpeg stderr', String(chunk));
       });
 
-      ffmpeg.on('exit', async () => {
-        ctx.log('ffmpeg playback ended', {
-          userId: invokerCtx.userId,
-          channelId,
-          ffmpegPid: ffmpeg.pid
-        });
+      ffmpeg.on('exit', () => {
+        ctx.log('ffmpeg playback ended', { userId: invokerCtx.userId, channelId });
         stopPlaybackForUser(ctx, invokerCtx.userId);
       });
 
@@ -463,7 +572,6 @@ const onUnload = (ctx: PluginContext) => {
   for (const userId of activePlaybackByUser.keys()) {
     stopPlaybackForUser(ctx, userId);
   }
-
   ctx.ui.disable();
   ctx.log('Soundboard plugin unloaded');
 };
