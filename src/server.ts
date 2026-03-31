@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import type { TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from './types';
@@ -16,17 +16,86 @@ const getFfmpegBinaryPath = (pluginPath: string) => {
   return join(pluginPath, 'bin', binaryName);
 };
 
-const assertFfmpegBinary = async (pluginPath: string) => {
+// Maps process.platform + process.arch to an ffbinaries component name.
+const getFfbinariesComponent = (): string => {
+  const { platform, arch } = process;
+  if (platform === 'linux') return arch === 'arm64' ? 'linux-arm64' : 'linux-64';
+  if (platform === 'darwin') return arch === 'arm64' ? 'osx-arm64' : 'osx-64';
+  if (platform === 'win32') return 'windows-64';
+  throw new Error(`Unsupported platform for ffmpeg download: ${platform}`);
+};
+
+type TFfbinariesApiResponse = {
+  bin: Record<string, { ffmpeg?: string }>;
+};
+
+const extractZip = (archivePath: string, destDir: string): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const [cmd, args] =
+      process.platform === 'win32'
+        ? [
+            'powershell',
+            ['-Command', `Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force`]
+          ]
+        : ['unzip', ['-o', archivePath, '-d', destDir]];
+    const proc = spawn(cmd, args);
+    proc.on('exit', (code) =>
+      code === 0 ? resolve() : reject(new Error(`${cmd} exited with code ${code}`))
+    );
+    proc.on('error', reject);
+  });
+
+const downloadFfmpegBinary = async (pluginPath: string, log: (msg: string) => void): Promise<void> => {
+  const binDir = join(pluginPath, 'bin');
+  await mkdir(binDir, { recursive: true });
+
+  const component = getFfbinariesComponent();
+
+  log(`[soundboard] fetching ffmpeg download URL for ${component}…`);
+  const apiRes = await fetch('https://ffbinaries.com/api/v1/version/latest');
+  if (!apiRes.ok) throw new Error(`ffbinaries API error: HTTP ${apiRes.status}`);
+  const apiData = (await apiRes.json()) as TFfbinariesApiResponse;
+  const downloadUrl = apiData.bin[component]?.ffmpeg;
+  if (!downloadUrl) throw new Error(`No ffmpeg download URL found for component: ${component}`);
+
+  log(`[soundboard] downloading ffmpeg from ${downloadUrl}…`);
+  const dlRes = await fetch(downloadUrl);
+  if (!dlRes.ok) throw new Error(`ffmpeg download failed: HTTP ${dlRes.status}`);
+
+  const archivePath = join(binDir, 'ffmpeg-tmp.zip');
+  await writeFile(archivePath, Buffer.from(await dlRes.arrayBuffer()));
+
+  log('[soundboard] extracting ffmpeg binary…');
+  try {
+    await extractZip(archivePath, binDir);
+  } finally {
+    await unlink(archivePath).catch(() => {});
+  }
+
   const ffmpegPath = getFfmpegBinaryPath(pluginPath);
+  if (process.platform !== 'win32') {
+    await chmod(ffmpegPath, 0o755);
+  }
+
+  log(`[soundboard] ffmpeg installed at ${ffmpegPath}`);
+};
+
+const ensureFfmpegBinary = async (pluginPath: string, log: (msg: string) => void): Promise<string> => {
+  const ffmpegPath = getFfmpegBinaryPath(pluginPath);
+
   try {
     await access(ffmpegPath, fsConstants.X_OK);
     return ffmpegPath;
   } catch {
-    throw new Error(
-      `Missing required ffmpeg binary at "${ffmpegPath}". ` +
-        'Install ffmpeg in this plugin under bin/ (bin/ffmpeg on Linux/macOS, bin/ffmpeg.exe on Windows).'
-    );
+    // Not present or not executable — download it
   }
+
+  log('[soundboard] ffmpeg not found in bin/, downloading…');
+  await downloadFfmpegBinary(pluginPath, log);
+
+  // Verify the binary is now accessible and executable
+  await access(ffmpegPath, fsConstants.X_OK);
+  return ffmpegPath;
 };
 
 const loadSounds = async (pluginPath: string): Promise<TSoundEntry[]> => {
@@ -474,7 +543,7 @@ const stopPlayback = (ctx: PluginContext, playbackId: string) => {
 const onLoad = async (ctx: PluginContext) => {
   ctx.log('Soundboard plugin loaded');
 
-  const ffmpegBinaryPath = await assertFfmpegBinary(ctx.path);
+  const ffmpegBinaryPath = await ensureFfmpegBinary(ctx.path, ctx.log);
   ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
 
   await mkdir(getSoundsDir(ctx.path), { recursive: true });
