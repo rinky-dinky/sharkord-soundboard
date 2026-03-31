@@ -530,17 +530,36 @@ const onLoad = async (ctx: PluginContext) => {
         producers: { audio: producer }
       });
 
+      // Register the playback entry now so it can be cancelled (e.g. plugin
+      // unload) even before ffmpeg starts. ffmpegPid is filled in below.
+      const playbackEntry: TRuntimePlayback = {
+        playbackId,
+        userId: invokerCtx.userId,
+        producer,
+        transport,
+        streamHandleRemove: streamHandle.remove,
+      };
+      activePlaybacks.set(playbackId, playbackEntry);
+
+      // Give stream consumer(s) time to connect before sending audio.
+      // createStream() notifies clients over the network; they then create their
+      // mediasoup consumers. This round-trip typically takes 100–400 ms. If
+      // ffmpeg starts before any consumer exists the first packets (which ffmpeg
+      // bursts at >2x real-time speed) are dropped and the beginning of the
+      // sound is cut off.
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+
+      // Bail out if the playback was cancelled during the startup delay.
+      if (!activePlaybacks.has(playbackId)) {
+        return { ok: true };
+      }
+
       const ffmpeg = spawn(ffmpegBinaryPath, [
         '-re',
         '-i', sound.localPath,
         '-vn',
         '-ac', '2',
         '-ar', '48000',
-        // Prepend 300 ms of silence so the RTP pathway and jitter buffer are
-        // fully initialised before real audio arrives. Without this, the first
-        // packets can be dropped because mediasoup is still setting up the
-        // comedia remote address from the very first packet.
-        '-af', 'adelay=300|300',
         '-c:a', 'libopus',
         '-application', 'audio',
         '-payload_type', `${RTP_AUDIO_PAYLOAD_TYPE}`,
@@ -549,14 +568,7 @@ const onLoad = async (ctx: PluginContext) => {
         `rtp://${ip}:${transport.tuple.localPort}?pkt_size=1200`
       ]);
 
-      activePlaybacks.set(playbackId, {
-        playbackId,
-        userId: invokerCtx.userId,
-        producer,
-        transport,
-        streamHandleRemove: streamHandle.remove,
-        ffmpegPid: ffmpeg.pid
-      });
+      playbackEntry.ffmpegPid = ffmpeg.pid;
 
       ctx.log('Started ffmpeg playback', {
         userId: invokerCtx.userId,
