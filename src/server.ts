@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access, chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { inflateRaw } from 'node:zlib';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import type { TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from './types';
 
@@ -29,20 +30,37 @@ type TFfbinariesApiResponse = {
   bin: Record<string, { ffmpeg?: string }>;
 };
 
-const extractZip = (archivePath: string, destDir: string): Promise<void> =>
+// Minimal zip parser — extracts the first entry whose name ends with `entryName`.
+// Handles stored (method 0) and deflated (method 8) entries, which covers all
+// ffbinaries zip archives. No shell tools required.
+const extractZipEntry = (zipBuf: Buffer, entryName: string): Promise<Buffer> =>
   new Promise((resolve, reject) => {
-    const [cmd, args] =
-      process.platform === 'win32'
-        ? [
-            'powershell',
-            ['-Command', `Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force`]
-          ]
-        : ['unzip', ['-o', archivePath, '-d', destDir]];
-    const proc = spawn(cmd, args);
-    proc.on('exit', (code) =>
-      code === 0 ? resolve() : reject(new Error(`${cmd} exited with code ${code}`))
-    );
-    proc.on('error', reject);
+    let offset = 0;
+    while (offset < zipBuf.length - 30) {
+      if (zipBuf.readUInt32LE(offset) !== 0x04034b50) break; // local file header signature
+
+      const flags = zipBuf.readUInt16LE(offset + 6);
+      const method = zipBuf.readUInt16LE(offset + 8);
+      const compressedSize = zipBuf.readUInt32LE(offset + 18);
+      const fileNameLen = zipBuf.readUInt16LE(offset + 26);
+      const extraLen = zipBuf.readUInt16LE(offset + 28);
+      const fileName = zipBuf.subarray(offset + 30, offset + 30 + fileNameLen).toString();
+      const dataOffset = offset + 30 + fileNameLen + extraLen;
+
+      if (fileName === entryName || fileName.endsWith(`/${entryName}`)) {
+        // bit 3 = sizes are in a data descriptor after the data; scan for it
+        if (flags & 0x08) {
+          return reject(new Error('zip data descriptor entries are not supported'));
+        }
+        const compressed = zipBuf.subarray(dataOffset, dataOffset + compressedSize);
+        if (method === 0) return resolve(compressed);
+        if (method === 8) return inflateRaw(compressed, (err, result) => err ? reject(err) : resolve(result));
+        return reject(new Error(`Unsupported zip compression method: ${method}`));
+      }
+
+      offset = dataOffset + compressedSize;
+    }
+    reject(new Error(`Entry "${entryName}" not found in zip archive`));
   });
 
 const downloadFfmpegBinary = async (pluginPath: string, log: (msg: string) => void): Promise<void> => {
@@ -62,17 +80,15 @@ const downloadFfmpegBinary = async (pluginPath: string, log: (msg: string) => vo
   const dlRes = await fetch(downloadUrl);
   if (!dlRes.ok) throw new Error(`ffmpeg download failed: HTTP ${dlRes.status}`);
 
-  const archivePath = join(binDir, 'ffmpeg-tmp.zip');
-  await writeFile(archivePath, Buffer.from(await dlRes.arrayBuffer()));
+  const zipBuf = Buffer.from(await dlRes.arrayBuffer());
+  const entryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
 
   log('[soundboard] extracting ffmpeg binary…');
-  try {
-    await extractZip(archivePath, binDir);
-  } finally {
-    await unlink(archivePath).catch(() => {});
-  }
+  const binary = await extractZipEntry(zipBuf, entryName);
 
   const ffmpegPath = getFfmpegBinaryPath(pluginPath);
+  await writeFile(ffmpegPath, binary);
+
   if (process.platform !== 'win32') {
     await chmod(ffmpegPath, 0o755);
   }
