@@ -541,13 +541,24 @@ const onLoad = async (ctx: PluginContext) => {
       };
       activePlaybacks.set(playbackId, playbackEntry);
 
-      // Give stream consumer(s) time to connect before sending audio.
-      // createStream() notifies clients over the network; they then create their
-      // mediasoup consumers. This round-trip typically takes 100–400 ms. If
-      // ffmpeg starts before any consumer exists the first packets (which ffmpeg
-      // bursts at >2x real-time speed) are dropped and the beginning of the
-      // sound is cut off.
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+      // Wait until at least one consumer has subscribed to the producer before
+      // sending audio. createStream() notifies clients over the network; they
+      // then create their mediasoup consumers. If ffmpeg starts before any
+      // consumer exists the first packets (which ffmpeg bursts at >2x real-time)
+      // are dropped and the beginning of the sound is cut off.
+      //
+      // We listen on the mediasoup producer's observer for the 'newconsumer'
+      // event so we can start the moment someone is actually listening, rather
+      // than waiting a fixed delay. 500 ms is kept as a safety fallback in case
+      // the observer API is unavailable or no consumer arrives in time.
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, 500);
+        const obs = (producer as unknown as { observer?: { once(event: 'newconsumer', cb: () => void): void } }).observer;
+        obs?.once('newconsumer', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
 
       // Bail out if the playback was cancelled during the startup delay.
       if (!activePlaybacks.has(playbackId)) {
