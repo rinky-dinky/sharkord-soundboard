@@ -1,5 +1,7 @@
 import type { BunPlugin } from 'bun';
 import fs from 'fs/promises';
+import { execSync } from 'child_process';
+import ffmpegPath from 'ffmpeg-static';
 
 const pluginId = 'sharkord-soundboard';
 const outdir = `dist/${pluginId}`;
@@ -101,3 +103,27 @@ await Promise.all([
 ]);
 
 await fs.copyFile('manifest.json', `${outdir}/manifest.json`);
+
+const binDir = `${outdir}/bin`;
+await fs.mkdir(binDir, { recursive: true });
+
+const resolvedFfmpeg = (() => {
+  if (ffmpegPath) {
+    try {
+      fs.access(ffmpegPath);
+      return ffmpegPath;
+    } catch {}
+  }
+  try {
+    return execSync('which ffmpeg', { encoding: 'utf8' }).trim();
+  } catch {}
+  return null;
+})();
+
+if (resolvedFfmpeg) {
+  await fs.copyFile(resolvedFfmpeg, `${binDir}/ffmpeg`);
+  await fs.chmod(`${binDir}/ffmpeg`, 0o755);
+  console.log(`Bundled ffmpeg from ${resolvedFfmpeg}`);
+} else {
+  console.warn('ffmpeg binary not found — skipping bin/ffmpeg. Run: bun add -d ffmpeg-static (without --ignore-scripts)');
+}
