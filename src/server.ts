@@ -413,7 +413,7 @@ const startWarmup = async (ctx: PluginContext, userId: number, channelId: number
 
     const streamHandle = ctx.voice.createStream({
       channelId,
-      title: 'Soundboard helper',
+      title: 'SFX',
       key: `soundboard-warmup-${userId}`,
       producers: { audio: producer }
     });
