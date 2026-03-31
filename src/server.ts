@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { inflateRaw } from 'node:zlib';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import type { TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from './types';
 
@@ -16,17 +17,101 @@ const getFfmpegBinaryPath = (pluginPath: string) => {
   return join(pluginPath, 'bin', binaryName);
 };
 
-const assertFfmpegBinary = async (pluginPath: string) => {
+// Maps process.platform + process.arch to an ffbinaries component name.
+const getFfbinariesComponent = (): string => {
+  const { platform, arch } = process;
+  if (platform === 'linux') return arch === 'arm64' ? 'linux-arm64' : 'linux-64';
+  if (platform === 'darwin') return arch === 'arm64' ? 'osx-arm64' : 'osx-64';
+  if (platform === 'win32') return 'windows-64';
+  throw new Error(`Unsupported platform for ffmpeg download: ${platform}`);
+};
+
+type TFfbinariesApiResponse = {
+  bin: Record<string, { ffmpeg?: string }>;
+};
+
+// Minimal zip parser — extracts the first entry whose name ends with `entryName`.
+// Handles stored (method 0) and deflated (method 8) entries, which covers all
+// ffbinaries zip archives. No shell tools required.
+const extractZipEntry = (zipBuf: Buffer, entryName: string): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    let offset = 0;
+    while (offset < zipBuf.length - 30) {
+      if (zipBuf.readUInt32LE(offset) !== 0x04034b50) break; // local file header signature
+
+      const flags = zipBuf.readUInt16LE(offset + 6);
+      const method = zipBuf.readUInt16LE(offset + 8);
+      const compressedSize = zipBuf.readUInt32LE(offset + 18);
+      const fileNameLen = zipBuf.readUInt16LE(offset + 26);
+      const extraLen = zipBuf.readUInt16LE(offset + 28);
+      const fileName = zipBuf.subarray(offset + 30, offset + 30 + fileNameLen).toString();
+      const dataOffset = offset + 30 + fileNameLen + extraLen;
+
+      if (fileName === entryName || fileName.endsWith(`/${entryName}`)) {
+        // bit 3 = sizes are in a data descriptor after the data; scan for it
+        if (flags & 0x08) {
+          return reject(new Error('zip data descriptor entries are not supported'));
+        }
+        const compressed = zipBuf.subarray(dataOffset, dataOffset + compressedSize);
+        if (method === 0) return resolve(compressed);
+        if (method === 8) return inflateRaw(compressed, (err, result) => err ? reject(err) : resolve(result));
+        return reject(new Error(`Unsupported zip compression method: ${method}`));
+      }
+
+      offset = dataOffset + compressedSize;
+    }
+    reject(new Error(`Entry "${entryName}" not found in zip archive`));
+  });
+
+const downloadFfmpegBinary = async (pluginPath: string, log: (msg: string) => void): Promise<void> => {
+  const binDir = join(pluginPath, 'bin');
+  await mkdir(binDir, { recursive: true });
+
+  const component = getFfbinariesComponent();
+
+  log(`[soundboard] fetching ffmpeg download URL for ${component}…`);
+  const apiRes = await fetch('https://ffbinaries.com/api/v1/version/latest');
+  if (!apiRes.ok) throw new Error(`ffbinaries API error: HTTP ${apiRes.status}`);
+  const apiData = (await apiRes.json()) as TFfbinariesApiResponse;
+  const downloadUrl = apiData.bin[component]?.ffmpeg;
+  if (!downloadUrl) throw new Error(`No ffmpeg download URL found for component: ${component}`);
+
+  log(`[soundboard] downloading ffmpeg from ${downloadUrl}…`);
+  const dlRes = await fetch(downloadUrl);
+  if (!dlRes.ok) throw new Error(`ffmpeg download failed: HTTP ${dlRes.status}`);
+
+  const zipBuf = Buffer.from(await dlRes.arrayBuffer());
+  const entryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+
+  log('[soundboard] extracting ffmpeg binary…');
+  const binary = await extractZipEntry(zipBuf, entryName);
+
   const ffmpegPath = getFfmpegBinaryPath(pluginPath);
+  await writeFile(ffmpegPath, binary);
+
+  if (process.platform !== 'win32') {
+    await chmod(ffmpegPath, 0o755);
+  }
+
+  log(`[soundboard] ffmpeg installed at ${ffmpegPath}`);
+};
+
+const ensureFfmpegBinary = async (pluginPath: string, log: (msg: string) => void): Promise<string> => {
+  const ffmpegPath = getFfmpegBinaryPath(pluginPath);
+
   try {
     await access(ffmpegPath, fsConstants.X_OK);
     return ffmpegPath;
   } catch {
-    throw new Error(
-      `Missing required ffmpeg binary at "${ffmpegPath}". ` +
-        'Install ffmpeg in this plugin under bin/ (bin/ffmpeg on Linux/macOS, bin/ffmpeg.exe on Windows).'
-    );
+    // Not present or not executable — download it
   }
+
+  log('[soundboard] ffmpeg not found in bin/, downloading…');
+  await downloadFfmpegBinary(pluginPath, log);
+
+  // Verify the binary is now accessible and executable
+  await access(ffmpegPath, fsConstants.X_OK);
+  return ffmpegPath;
 };
 
 const loadSounds = async (pluginPath: string): Promise<TSoundEntry[]> => {
@@ -474,7 +559,7 @@ const stopPlayback = (ctx: PluginContext, playbackId: string) => {
 const onLoad = async (ctx: PluginContext) => {
   ctx.log('Soundboard plugin loaded');
 
-  const ffmpegBinaryPath = await assertFfmpegBinary(ctx.path);
+  const ffmpegBinaryPath = await ensureFfmpegBinary(ctx.path, ctx.log);
   ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
 
   await mkdir(getSoundsDir(ctx.path), { recursive: true });
