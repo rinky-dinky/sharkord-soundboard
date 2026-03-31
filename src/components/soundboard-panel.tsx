@@ -9,17 +9,52 @@ import type { TListSoundsResponse, TSoundInfo } from '../types';
 //                   (with optional ?accessToken=... query string)
 // ---------------------------------------------------------------------------
 
-const NATIVE_EMOJI_OPTIONS = [
-  '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
-  '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
-  '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪',
-  '😝', '🤑', '🤗', '🤭', '🫢', '🫣', '🤫', '🤔',
-  '🫡', '🤐', '🤨', '😐', '😑', '😶', '🫥', '😏',
-  '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤',
-  '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵',
-  '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓',
-  '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️'
+// Five pages of 40 emojis each (8 columns × 5 rows per page).
+const NATIVE_EMOJI_PAGES: string[][] = [
+  // Page 1 – Smileys
+  [
+    '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
+    '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
+    '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪',
+    '😝', '🤑', '🤗', '🤭', '🫢', '🫣', '🤫', '🤔',
+    '🫡', '🤐', '🤨', '😐', '😑', '😶', '🫥', '😏',
+  ],
+  // Page 2 – More faces & hands
+  [
+    '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤',
+    '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵',
+    '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓',
+    '😱', '😤', '😡', '🤬', '😈', '👿', '💀', '☠️',
+    '👋', '🤚', '🖐️', '✋', '🤙', '👍', '👎', '👏',
+  ],
+  // Page 3 – Sound, music & entertainment
+  [
+    '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️',
+    '🎸', '🥁', '🎷', '🎺', '🎻', '🪕', '🎹', '🪗',
+    '🎉', '🎊', '🎈', '🎁', '🏆', '🥇', '🎯', '🎮',
+    '🕹️', '🎲', '♟️', '🎪', '🎭', '🎨', '🎬', '🎼',
+    '📻', '📺', '📷', '📸', '🔭', '🔬', '💻', '🖥️',
+  ],
+  // Page 4 – Animals
+  [
+    '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼',
+    '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🙈',
+    '🙉', '🙊', '🐔', '🐧', '🐦', '🦅', '🦆', '🦉',
+    '🐺', '🐴', '🦄', '🐝', '🦋', '🐌', '🐞', '🐜',
+    '🦎', '🐢', '🐍', '🦕', '🦖', '🐳', '🐬', '🐟',
+  ],
+  // Page 5 – Food & symbols
+  [
+    '🍎', '🍊', '🍋', '🍇', '🍓', '🍒', '🍑', '🥝',
+    '🍕', '🍔', '🌮', '🍣', '🍜', '🍦', '🍰', '🎂',
+    '☕', '🍵', '🍺', '🍻', '🥂', '🍷', '🧃', '🥤',
+    '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
+    '💯', '✅', '❌', '⚠️', '🔥', '💥', '⭐', '🌟',
+  ],
 ];
+
+const SOUNDS_PER_PAGE = 20;
+const CUSTOM_EMOJI_PAGE_SIZE = 40;
 
 const isCustomEmoji = (value: string) => value.startsWith('/public/');
 
@@ -43,6 +78,33 @@ const EmojiDisplay = ({ value, className }: { value: string; className?: string 
     <>{value}</>
   );
 
+// Compact numbered page buttons, hidden when there is only one page.
+const PageButtons = ({
+  page,
+  pageCount,
+  onPage,
+}: {
+  page: number;
+  pageCount: number;
+  onPage: (p: number) => void;
+}) => {
+  if (pageCount <= 1) return null;
+  return (
+    <div className="flex gap-1 justify-center">
+      {Array.from({ length: pageCount }, (_, i) => (
+        <button
+          key={i}
+          type="button"
+          onClick={() => onPage(i)}
+          className={`h-6 w-6 rounded border text-xs ${page === i ? 'bg-accent font-semibold' : 'opacity-60 hover:bg-accent'}`}
+        >
+          {i + 1}
+        </button>
+      ))}
+    </div>
+  );
+};
+
 // ---------------------------------------------------------------------------
 // Two-tab emoji picker (Native | Custom).
 // The Custom tab is hidden when the server has no custom emojis.
@@ -59,12 +121,20 @@ const EmojiPicker = ({
 }) => {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'native' | 'custom'>('native');
+  const [nativePage, setNativePage] = useState(0);
+  const [customPage, setCustomPage] = useState(0);
   const hasCustom = customEmojis.length > 0;
 
   const pick = (v: string) => {
     onChange(v);
     setOpen(false);
   };
+
+  const customPageCount = Math.ceil(customEmojis.length / CUSTOM_EMOJI_PAGE_SIZE);
+  const visibleCustomEmojis = customEmojis.slice(
+    customPage * CUSTOM_EMOJI_PAGE_SIZE,
+    (customPage + 1) * CUSTOM_EMOJI_PAGE_SIZE,
+  );
 
   return (
     <div className="flex flex-col gap-1">
@@ -100,34 +170,40 @@ const EmojiPicker = ({
           ) : null}
 
           {tab === 'native' || !hasCustom ? (
-            <div className="grid grid-cols-8 gap-1 p-2">
-              {NATIVE_EMOJI_OPTIONS.map((candidate) => (
-                <button
-                  key={candidate}
-                  type="button"
-                  onClick={() => pick(candidate)}
-                  className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
-                >
-                  {candidate}
-                </button>
-              ))}
+            <div className="p-2 flex flex-col gap-1.5">
+              <div className="grid grid-cols-8 gap-1">
+                {NATIVE_EMOJI_PAGES[nativePage].map((candidate) => (
+                  <button
+                    key={candidate}
+                    type="button"
+                    onClick={() => pick(candidate)}
+                    className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
+                  >
+                    {candidate}
+                  </button>
+                ))}
+              </div>
+              <PageButtons page={nativePage} pageCount={NATIVE_EMOJI_PAGES.length} onPage={setNativePage} />
             </div>
           ) : (
-            <div className="grid grid-cols-8 gap-1 p-2 max-h-48 overflow-y-auto">
-              {customEmojis.map((emoji) => {
-                const url = customEmojiUrl(emoji);
-                return (
-                  <button
-                    key={emoji.id}
-                    type="button"
-                    title={emoji.name}
-                    onClick={() => pick(url)}
-                    className={`rounded p-1 hover:bg-accent ${value === url ? 'bg-accent' : ''}`}
-                  >
-                    <img src={url} className="h-7 w-7 object-contain" alt={emoji.name} />
-                  </button>
-                );
-              })}
+            <div className="p-2 flex flex-col gap-1.5">
+              <div className="grid grid-cols-8 gap-1">
+                {visibleCustomEmojis.map((emoji) => {
+                  const url = customEmojiUrl(emoji);
+                  return (
+                    <button
+                      key={emoji.id}
+                      type="button"
+                      title={emoji.name}
+                      onClick={() => pick(url)}
+                      className={`rounded p-1 hover:bg-accent ${value === url ? 'bg-accent' : ''}`}
+                    >
+                      <img src={url} className="h-7 w-7 object-contain" alt={emoji.name} />
+                    </button>
+                  );
+                })}
+              </div>
+              <PageButtons page={customPage} pageCount={customPageCount} onPage={setCustomPage} />
             </div>
           )}
         </div>
@@ -149,7 +225,7 @@ const useSharkordStore = () => {
   return { state, actions: store.actions };
 };
 
-// Inline edit card shown in the main grid when edit mode is active.
+// Inline edit card shown in the edit grid.
 const EditableCard = ({
   sound,
   customEmojis,
@@ -256,6 +332,8 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [soundPage, setSoundPage] = useState(0);
+  const [editPage, setEditPage] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Pre-warm the RTP consumer whenever the panel is mounted in a voice channel,
@@ -303,6 +381,9 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
       });
 
       setSounds((prev) => [newSound, ...prev.filter((item) => item.id !== newSound.id)]);
+      // New sound lands on page 1, so reset both views to page 0.
+      setSoundPage(0);
+      setEditPage(0);
       setFile(null);
       setName('');
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -351,6 +432,15 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
     }
   }, [executePluginAction]);
 
+  // Clamp pages to valid range (handles deletions that shrink the list).
+  const soundPageCount = Math.ceil(sounds.length / SOUNDS_PER_PAGE);
+  const clampedSoundPage = Math.min(soundPage, Math.max(0, soundPageCount - 1));
+  const visibleSounds = sounds.slice(clampedSoundPage * SOUNDS_PER_PAGE, (clampedSoundPage + 1) * SOUNDS_PER_PAGE);
+
+  const editPageCount = Math.ceil(sounds.length / SOUNDS_PER_PAGE);
+  const clampedEditPage = Math.min(editPage, Math.max(0, editPageCount - 1));
+  const visibleEditSounds = sounds.slice(clampedEditPage * SOUNDS_PER_PAGE, (clampedEditPage + 1) * SOUNDS_PER_PAGE);
+
   return (
     <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
       {!isEditing ? (
@@ -360,8 +450,8 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
               ? 'Click a sound to play it in your active voice call.'
               : 'Join a voice call to play sounds.'}
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {sounds.map((sound) => (
+          <div className="grid grid-cols-2 gap-2">
+            {visibleSounds.map((sound) => (
               <button
                 key={sound.id}
                 disabled={!currentVoiceChannelId || loading}
@@ -373,26 +463,30 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
               </button>
             ))}
           </div>
+          <PageButtons page={clampedSoundPage} pageCount={soundPageCount} onPage={setSoundPage} />
         </>
       ) : (
         <>
           <p className="text-sm opacity-70">Edit names and emojis. Tap the trash icon twice to delete.</p>
-          <div className="flex flex-col gap-2">
-            {sounds.length === 0 ? (
-              <p className="text-sm opacity-60">No sounds yet.</p>
-            ) : (
-              sounds.map((sound) => (
-                <EditableCard
-                  key={sound.id}
-                  sound={sound}
-                  customEmojis={customEmojis}
-                  disabled={loading}
-                  onDelete={() => onDelete(sound.id)}
-                  onUpdate={(n, e) => onUpdate(sound.id, n, e)}
-                />
-              ))
-            )}
-          </div>
+          {sounds.length === 0 ? (
+            <p className="text-sm opacity-60">No sounds yet.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                {visibleEditSounds.map((sound) => (
+                  <EditableCard
+                    key={sound.id}
+                    sound={sound}
+                    customEmojis={customEmojis}
+                    disabled={loading}
+                    onDelete={() => onDelete(sound.id)}
+                    onUpdate={(n, e) => onUpdate(sound.id, n, e)}
+                  />
+                ))}
+              </div>
+              <PageButtons page={clampedEditPage} pageCount={editPageCount} onPage={setEditPage} />
+            </>
+          )}
         </>
       )}
 
