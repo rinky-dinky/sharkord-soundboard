@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { TPluginEmoji } from '@sharkord/plugin-sdk';
 import type { TListSoundsResponse, TSoundInfo } from '../types';
 
@@ -50,6 +51,38 @@ const NATIVE_EMOJI_PAGES: string[][] = [
     '☕', '🍵', '🍺', '🍻', '🥂', '🍷', '🧃', '🥤',
     '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
     '💯', '✅', '❌', '⚠️', '🔥', '💥', '⭐', '🌟',
+  ],
+  // Page 6 – Nature & weather
+  [
+    '🌸', '🌺', '🌻', '🌹', '🌷', '🌼', '🌾', '🍀',
+    '🍁', '🍂', '🍃', '🌿', '🌱', '🌲', '🌳', '🌴',
+    '🌵', '☘️', '🍄', '🌊', '🌈', '⛅', '🌤️', '🌧️',
+    '⛈️', '🌩️', '❄️', '☃️', '⛄', '🌬️', '💨', '🌙',
+    '🌑', '🌒', '🌓', '🌔', '🌕', '☀️', '🌝', '🌞',
+  ],
+  // Page 7 – Travel & places
+  [
+    '🚀', '✈️', '🚂', '🚗', '🚕', '🚙', '🚌', '🏎️',
+    '🛸', '🚁', '⛵', '🚢', '🛳️', '🏖️', '🏝️', '🏔️',
+    '🗻', '🌋', '🗼', '🗽', '🏰', '🏯', '🏟️', '🎡',
+    '🎢', '🎠', '🌃', '🌆', '🌇', '🌉', '🌁', '🌐',
+    '🗺️', '🧭', '🏕️', '⛺', '🛖', '🏠', '🏡', '🏢',
+  ],
+  // Page 8 – Objects & tools
+  [
+    '💡', '🔦', '🕯️', '🔑', '🗝️', '🔒', '🔓', '🔨',
+    '⚒️', '🛠️', '⛏️', '🪛', '🪚', '🔧', '🪤', '🧲',
+    '💣', '🧨', '🪓', '🔮', '🪄', '🧿', '💎', '👑',
+    '🎩', '🎓', '👓', '🕶️', '🥽', '💍', '💰', '💵',
+    '🪙', '💳', '📱', '⌨️', '🖱️', '🖨️', '📦', '🧰',
+  ],
+  // Page 9 – Sports & activities
+  [
+    '⚽', '🏀', '🏈', '⚾', '🥎', '🏐', '🏉', '🎾',
+    '🏸', '🏒', '🥊', '🥋', '🏹', '🎣', '🤿', '🎽',
+    '🛹', '🛷', '⛸️', '🥌', '🏂', '🪂', '🏋️', '🤸',
+    '⛹️', '🏇', '🧗', '🏊', '🚣', '🚴', '🥈', '🥉',
+    '🎖️', '🏅', '🎗️', '🏌️', '🧘', '🤺', '🤼', '🤾',
   ],
 ];
 
@@ -123,7 +156,42 @@ const EmojiPicker = ({
   const [tab, setTab] = useState<'native' | 'custom'>('native');
   const [nativePage, setNativePage] = useState(0);
   const [customPage, setCustomPage] = useState(0);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const hasCustom = customEmojis.length > 0;
+
+  const handleToggle = () => {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const dropdownWidth = 296;
+      const dropdownHeight = 260;
+      let top = rect.bottom + 4;
+      if (top + dropdownHeight > window.innerHeight - 8) {
+        top = rect.top - dropdownHeight - 4;
+      }
+      let left = rect.left;
+      if (left + dropdownWidth > window.innerWidth - 8) {
+        left = window.innerWidth - 8 - dropdownWidth;
+      }
+      setDropdownPos({ top, left });
+    }
+    setOpen((v) => !v);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      if (
+        !buttonRef.current?.contains(e.target as Node) &&
+        !dropdownRef.current?.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [open]);
 
   const pick = (v: string) => {
     onChange(v);
@@ -136,78 +204,85 @@ const EmojiPicker = ({
     (customPage + 1) * CUSTOM_EMOJI_PAGE_SIZE,
   );
 
+  const dropdown = dropdownPos ? (
+    <div
+      ref={dropdownRef}
+      style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: 296, zIndex: 2147483647 }}
+      className="rounded border bg-background shadow-md"
+      data-emoji-picker-dropdown
+    >
+      {hasCustom ? (
+        <div className="flex border-b text-xs">
+          <button
+            type="button"
+            onClick={() => setTab('native')}
+            className={`flex-1 py-1.5 hover:bg-accent ${tab === 'native' ? 'font-semibold' : 'opacity-60'}`}
+          >
+            Emoji
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('custom')}
+            className={`flex-1 py-1.5 hover:bg-accent ${tab === 'custom' ? 'font-semibold' : 'opacity-60'}`}
+          >
+            Custom
+          </button>
+        </div>
+      ) : null}
+
+      {tab === 'native' || !hasCustom ? (
+        <div className="p-2 flex flex-col gap-1.5">
+          <div className="grid grid-cols-8 gap-1">
+            {NATIVE_EMOJI_PAGES[nativePage].map((candidate) => (
+              <button
+                key={candidate}
+                type="button"
+                onClick={() => pick(candidate)}
+                className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
+              >
+                {candidate}
+              </button>
+            ))}
+          </div>
+          <PageButtons page={nativePage} pageCount={NATIVE_EMOJI_PAGES.length} onPage={setNativePage} />
+        </div>
+      ) : (
+        <div className="p-2 flex flex-col gap-1.5">
+          <div className="grid grid-cols-8 gap-1">
+            {visibleCustomEmojis.map((emoji) => {
+              const url = customEmojiUrl(emoji);
+              return (
+                <button
+                  key={emoji.id}
+                  type="button"
+                  title={emoji.name}
+                  onClick={() => pick(url)}
+                  className={`rounded p-1 hover:bg-accent ${value === url ? 'bg-accent' : ''}`}
+                >
+                  <img src={url} className="h-7 w-7 object-contain" alt={emoji.name} />
+                </button>
+              );
+            })}
+          </div>
+          <PageButtons page={customPage} pageCount={customPageCount} onPage={setCustomPage} />
+        </div>
+      )}
+    </div>
+  ) : null;
+
   return (
-    <div className="flex flex-col gap-1">
+    <div className="shrink-0">
       <button
+        ref={buttonRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={handleToggle}
         aria-expanded={open}
         aria-label="Pick emoji"
-        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border hover:bg-accent"
+        className="inline-flex h-8 w-8 items-center justify-center rounded border hover:bg-accent"
       >
         <EmojiDisplay value={value} className="h-5 w-5" />
       </button>
-
-      {open ? (
-        <div className="rounded border bg-background shadow-md">
-          {hasCustom ? (
-            <div className="flex border-b text-xs">
-              <button
-                type="button"
-                onClick={() => setTab('native')}
-                className={`flex-1 py-1.5 hover:bg-accent ${tab === 'native' ? 'font-semibold' : 'opacity-60'}`}
-              >
-                Emoji
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab('custom')}
-                className={`flex-1 py-1.5 hover:bg-accent ${tab === 'custom' ? 'font-semibold' : 'opacity-60'}`}
-              >
-                Custom
-              </button>
-            </div>
-          ) : null}
-
-          {tab === 'native' || !hasCustom ? (
-            <div className="p-2 flex flex-col gap-1.5">
-              <div className="grid grid-cols-8 gap-1">
-                {NATIVE_EMOJI_PAGES[nativePage].map((candidate) => (
-                  <button
-                    key={candidate}
-                    type="button"
-                    onClick={() => pick(candidate)}
-                    className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
-                  >
-                    {candidate}
-                  </button>
-                ))}
-              </div>
-              <PageButtons page={nativePage} pageCount={NATIVE_EMOJI_PAGES.length} onPage={setNativePage} />
-            </div>
-          ) : (
-            <div className="p-2 flex flex-col gap-1.5">
-              <div className="grid grid-cols-8 gap-1">
-                {visibleCustomEmojis.map((emoji) => {
-                  const url = customEmojiUrl(emoji);
-                  return (
-                    <button
-                      key={emoji.id}
-                      type="button"
-                      title={emoji.name}
-                      onClick={() => pick(url)}
-                      className={`rounded p-1 hover:bg-accent ${value === url ? 'bg-accent' : ''}`}
-                    >
-                      <img src={url} className="h-7 w-7 object-contain" alt={emoji.name} />
-                    </button>
-                  );
-                })}
-              </div>
-              <PageButtons page={customPage} pageCount={customPageCount} onPage={setCustomPage} />
-            </div>
-          )}
-        </div>
-      ) : null}
+      {open && dropdownPos && createPortal(dropdown, document.body)}
     </div>
   );
 };
@@ -507,8 +582,15 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
             type="file"
             accept="audio/*"
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFile(e.target.files?.[0] ?? null)}
-            className="rounded border bg-transparent px-2 py-1 text-sm file:mr-2 file:rounded file:border-0 file:bg-accent file:px-2 file:py-1 file:text-sm"
+            className="sr-only"
           />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="rounded border px-2 py-1 text-sm hover:bg-accent"
+          >
+            Upload file
+          </button>
           {file ? (
             <p className="text-xs opacity-60 truncate">{file.name} ({(file.size / 1024).toFixed(1)} KB)</p>
           ) : null}

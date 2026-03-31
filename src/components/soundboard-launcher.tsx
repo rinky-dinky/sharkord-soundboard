@@ -50,7 +50,8 @@ const SoundboardLauncher = () => {
       const target = event.target as Node;
       const isLauncherClick = containerRef.current?.contains(target);
       const isPanelClick = panelRef.current?.contains(target);
-      if (!isLauncherClick && !isPanelClick) handleClose();
+      const isEmojiDropdown = (target as Element).closest?.('[data-emoji-picker-dropdown]');
+      if (!isLauncherClick && !isPanelClick && !isEmojiDropdown) handleClose();
     };
 
     const handleEscape = (event: KeyboardEvent) => {
