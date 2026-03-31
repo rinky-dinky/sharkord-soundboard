@@ -412,7 +412,7 @@ const startWarmup = async (ctx: PluginContext, userId: number, channelId: number
 
     const streamHandle = ctx.voice.createStream({
       channelId,
-      title: '🔊 Soundboard',
+      title: '🔊 Soundboard (ready)',
       key: `soundboard-warmup-${userId}`,
       producers: { audio: producer }
     });
@@ -614,7 +614,19 @@ const onLoad = async (ctx: PluginContext) => {
 
       if (useWarmup) {
         warmupByUser.delete(invokerCtx.userId);
-        ({ transport, producer, streamHandleRemove, audioSsrc, ip } = warmup);
+        ({ transport, producer, audioSsrc, ip } = warmup);
+        // Swap the warmup stream title to the actual sound name. The consumer
+        // remains subscribed at the mediasoup level (it tracks the producer's
+        // SSRC, not the stream wrapper), so this is a metadata-only change and
+        // does not interrupt the audio path.
+        warmup.streamHandleRemove();
+        const streamHandle = ctx.voice.createStream({
+          channelId,
+          title: `🔊 ${sound.name}`,
+          key: `soundboard-${playbackId}`,
+          producers: { audio: producer }
+        });
+        streamHandleRemove = streamHandle.remove;
         // Re-warm in the background so the next click is instant too.
         startWarmup(ctx, invokerCtx.userId, channelId).catch(() => {});
       } else {
