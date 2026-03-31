@@ -258,6 +258,17 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Pre-warm the RTP consumer whenever the panel is mounted in a voice channel,
+  // or when the user switches channels. This hides the consumer-connection delay
+  // behind the time the user spends browsing sounds, so playback feels instant.
+  const executePluginActionRef = useRef(executePluginAction);
+  useEffect(() => { executePluginActionRef.current = executePluginAction; });
+  useEffect(() => {
+    if (!currentVoiceChannelId) return;
+    executePluginActionRef.current('warmup_soundboard').catch(() => {});
+    return () => { executePluginActionRef.current('teardown_soundboard').catch(() => {}); };
+  }, [currentVoiceChannelId]);
+
   const syncSounds = useCallback(async () => {
     setLoading(true);
     setError(null);

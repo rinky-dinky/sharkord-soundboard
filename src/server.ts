@@ -347,6 +347,102 @@ type TRuntimePlayback = {
 
 const activePlaybacks = new Map<string, TRuntimePlayback>();
 
+// ---------------------------------------------------------------------------
+// Pre-warm: one RTP transport+producer+stream per user, created while the
+// user is browsing the soundboard so the consumer is already subscribed by
+// the time they hit a button.
+// ---------------------------------------------------------------------------
+
+type TWarmup = {
+  transport: PlainTransport;
+  producer: Producer;
+  streamHandleRemove: () => void;
+  channelId: number;
+  audioSsrc: number;
+  ip: string;
+};
+
+const warmupByUser = new Map<number, TWarmup>();
+
+const teardownWarmupForUser = (ctx: PluginContext, userId: number) => {
+  const warmup = warmupByUser.get(userId);
+  if (!warmup) return;
+  warmup.streamHandleRemove();
+  warmup.producer.close();
+  warmup.transport.close();
+  warmupByUser.delete(userId);
+};
+
+// Creates a transport+producer+stream for userId in channelId and waits for a
+// consumer to subscribe. On success the result is stored in warmupByUser and
+// play_sound can use it without any delay.
+const startWarmup = async (ctx: PluginContext, userId: number, channelId: number): Promise<void> => {
+  teardownWarmupForUser(ctx, userId);
+
+  const router = ctx.voice.getRouter(channelId);
+  const { announcedAddress, ip } = ctx.voice.getListenInfo();
+
+  let transport: PlainTransport | undefined;
+  try {
+    transport = await router.createPlainTransport({
+      listenIp: { ip, announcedIp: announcedAddress },
+      rtcpMux: true,
+      comedia: true,
+      enableSrtp: false
+    });
+
+    const audioSsrc = Math.floor(Math.random() * 1_000_000_000);
+
+    const producer = await transport.produce({
+      kind: 'audio',
+      rtpParameters: {
+        codecs: [
+          {
+            mimeType: 'audio/opus',
+            payloadType: RTP_AUDIO_PAYLOAD_TYPE,
+            clockRate: 48000,
+            channels: 2,
+            parameters: { useinbandfec: 1, minptime: 10 },
+            rtcpFeedback: []
+          }
+        ],
+        encodings: [{ ssrc: audioSsrc }]
+      }
+    });
+
+    const streamHandle = ctx.voice.createStream({
+      channelId,
+      title: '🔊 Soundboard',
+      key: `soundboard-warmup-${userId}`,
+      producers: { audio: producer }
+    });
+
+    warmupByUser.set(userId, {
+      transport,
+      producer,
+      streamHandleRemove: streamHandle.remove,
+      channelId,
+      audioSsrc,
+      ip
+    });
+
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 500);
+      const obs = (producer as unknown as { observer?: { once(event: 'newconsumer', cb: () => void): void } }).observer;
+      obs?.once('newconsumer', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+
+    ctx.debug('Soundboard warmup ready', { userId, channelId });
+  } catch (err) {
+    ctx.debug('Soundboard warmup failed', err);
+    transport?.close();
+    warmupByUser.delete(userId);
+  }
+};
+
 const stopPlayback = (ctx: PluginContext, playbackId: string) => {
   const playback = activePlaybacks.get(playbackId);
   if (!playback) return;
@@ -469,6 +565,23 @@ const onLoad = async (ctx: PluginContext) => {
   });
 
   ctx.actions.register({
+    name: 'warmup_soundboard',
+    async execute(invokerCtx: TInvokerContext) {
+      if (!invokerCtx.currentVoiceChannelId) return { ok: true };
+      await startWarmup(ctx, invokerCtx.userId, invokerCtx.currentVoiceChannelId);
+      return { ok: true };
+    }
+  });
+
+  ctx.actions.register({
+    name: 'teardown_soundboard',
+    async execute(invokerCtx: TInvokerContext) {
+      teardownWarmupForUser(ctx, invokerCtx.userId);
+      return { ok: true };
+    }
+  });
+
+  ctx.actions.register({
     name: 'play_sound',
     async execute(invokerCtx: TInvokerContext, payload: { soundId: string }) {
       ctx.debug('Action play_sound invoked', {
@@ -488,81 +601,86 @@ const onLoad = async (ctx: PluginContext) => {
 
       const playbackId = `${invokerCtx.userId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
-      const router = ctx.voice.getRouter(channelId);
-      const { announcedAddress, ip } = ctx.voice.getListenInfo();
+      // Use a pre-warmed setup if one is ready for this user/channel so the
+      // consumer is already subscribed and ffmpeg can start without any delay.
+      const warmup = warmupByUser.get(invokerCtx.userId);
+      const useWarmup = warmup !== undefined && warmup.channelId === channelId;
 
-      const transport = await router.createPlainTransport({
-        listenIp: {
-          ip,
-          announcedIp: announcedAddress
-        },
-        rtcpMux: true,
-        comedia: true,
-        enableSrtp: false
-      });
+      let transport: PlainTransport;
+      let producer: Producer;
+      let streamHandleRemove: () => void;
+      let audioSsrc: number;
+      let ip: string;
 
-      const audioSsrc = Math.floor(Math.random() * 1_000_000_000);
+      if (useWarmup) {
+        warmupByUser.delete(invokerCtx.userId);
+        ({ transport, producer, streamHandleRemove, audioSsrc, ip } = warmup);
+        // Re-warm in the background so the next click is instant too.
+        startWarmup(ctx, invokerCtx.userId, channelId).catch(() => {});
+      } else {
+        // No warmup available — create on-demand and wait for the consumer.
+        teardownWarmupForUser(ctx, invokerCtx.userId);
 
-      const producer = await transport.produce({
-        kind: 'audio',
-        rtpParameters: {
-          codecs: [
-            {
-              mimeType: 'audio/opus',
-              payloadType: RTP_AUDIO_PAYLOAD_TYPE,
-              clockRate: 48000,
-              channels: 2,
-              parameters: {
-                useinbandfec: 1,
-                minptime: 10
-              },
-              rtcpFeedback: []
-            }
-          ],
-          encodings: [{ ssrc: audioSsrc }]
-        }
-      });
+        const router = ctx.voice.getRouter(channelId);
+        const listenInfo = ctx.voice.getListenInfo();
+        ip = listenInfo.ip;
 
-      const streamHandle = ctx.voice.createStream({
-        channelId,
-        title: `🔊 ${sound.name}`,
-        key: `soundboard-${playbackId}`,
-        producers: { audio: producer }
-      });
+        transport = await router.createPlainTransport({
+          listenIp: { ip, announcedIp: listenInfo.announcedAddress },
+          rtcpMux: true,
+          comedia: true,
+          enableSrtp: false
+        });
 
-      // Register the playback entry now so it can be cancelled (e.g. plugin
-      // unload) even before ffmpeg starts. ffmpegPid is filled in below.
+        audioSsrc = Math.floor(Math.random() * 1_000_000_000);
+
+        producer = await transport.produce({
+          kind: 'audio',
+          rtpParameters: {
+            codecs: [
+              {
+                mimeType: 'audio/opus',
+                payloadType: RTP_AUDIO_PAYLOAD_TYPE,
+                clockRate: 48000,
+                channels: 2,
+                parameters: { useinbandfec: 1, minptime: 10 },
+                rtcpFeedback: []
+              }
+            ],
+            encodings: [{ ssrc: audioSsrc }]
+          }
+        });
+
+        const streamHandle = ctx.voice.createStream({
+          channelId,
+          title: `🔊 ${sound.name}`,
+          key: `soundboard-${playbackId}`,
+          producers: { audio: producer }
+        });
+        streamHandleRemove = streamHandle.remove;
+      }
+
       const playbackEntry: TRuntimePlayback = {
         playbackId,
         userId: invokerCtx.userId,
         producer,
         transport,
-        streamHandleRemove: streamHandle.remove,
+        streamHandleRemove,
       };
       activePlaybacks.set(playbackId, playbackEntry);
 
-      // Wait until at least one consumer has subscribed to the producer before
-      // sending audio. createStream() notifies clients over the network; they
-      // then create their mediasoup consumers. If ffmpeg starts before any
-      // consumer exists the first packets (which ffmpeg bursts at >2x real-time)
-      // are dropped and the beginning of the sound is cut off.
-      //
-      // We listen on the mediasoup producer's observer for the 'newconsumer'
-      // event so we can start the moment someone is actually listening, rather
-      // than waiting a fixed delay. 500 ms is kept as a safety fallback in case
-      // the observer API is unavailable or no consumer arrives in time.
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(resolve, 500);
-        const obs = (producer as unknown as { observer?: { once(event: 'newconsumer', cb: () => void): void } }).observer;
-        obs?.once('newconsumer', () => {
-          clearTimeout(timeout);
-          resolve();
+      if (!useWarmup) {
+        // Wait for a consumer before sending audio (see startWarmup for rationale).
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(resolve, 500);
+          const obs = (producer as unknown as { observer?: { once(event: 'newconsumer', cb: () => void): void } }).observer;
+          obs?.once('newconsumer', () => {
+            clearTimeout(timeout);
+            resolve();
+          });
         });
-      });
 
-      // Bail out if the playback was cancelled during the startup delay.
-      if (!activePlaybacks.has(playbackId)) {
-        return { ok: true };
+        if (!activePlaybacks.has(playbackId)) return { ok: true };
       }
 
       const ffmpeg = spawn(ffmpegBinaryPath, [
@@ -607,6 +725,9 @@ const onLoad = async (ctx: PluginContext) => {
 const onUnload = (ctx: PluginContext) => {
   for (const playbackId of activePlaybacks.keys()) {
     stopPlayback(ctx, playbackId);
+  }
+  for (const userId of warmupByUser.keys()) {
+    teardownWarmupForUser(ctx, userId);
   }
   ctx.ui.disable();
   ctx.log('Soundboard plugin unloaded');
