@@ -413,7 +413,7 @@ const startWarmup = async (ctx: PluginContext, userId: number, channelId: number
 
     const streamHandle = ctx.voice.createStream({
       channelId,
-      title: '🔊 Soundboard',
+      title: 'Soundboard helper',
       key: `soundboard-warmup-${userId}`,
       producers: { audio: producer }
     });
@@ -622,32 +622,11 @@ const onLoad = async (ctx: PluginContext) => {
 
       if (useWarmup) {
         warmupByUser.delete(invokerCtx.userId);
-        ({ transport, producer, audioSsrc, ip } = warmup);
-
-        // Create the sound-name stream while the warmup stream is still alive.
-        // This keeps the producer reachable so the client can subscribe to the
-        // new stream before we tear down the old one.
-        const soundStreamHandle = ctx.voice.createStream({
-          channelId,
-          title: `🔊 ${sound.name}`,
-          key: `soundboard-${playbackId}`,
-          producers: { audio: producer }
-        });
-        streamHandleRemove = soundStreamHandle.remove;
-
-        // Wait for a consumer on the new stream, then remove the warmup stream.
-        // Using the warmup means the mediasoup pipeline is already warm, so
-        // the new subscription typically completes in < 100 ms.
-        await new Promise<void>((resolve) => {
-          const timeout = setTimeout(resolve, 300);
-          const obs = (producer as unknown as { observer?: { once(event: 'newconsumer', cb: () => void): void } }).observer;
-          obs?.once('newconsumer', () => {
-            clearTimeout(timeout);
-            resolve();
-          });
-        });
-        warmup.streamHandleRemove();
-
+        // Transfer ownership of the warmup's resources directly to this playback.
+        // Do NOT remove and recreate the stream: both attempts showed that removing
+        // the warmup stream kills the producer's consumer even when a replacement
+        // stream with the same producer exists, leaving ffmpeg with no listener.
+        ({ transport, producer, streamHandleRemove, audioSsrc, ip } = warmup);
         // Re-warm in the background so the next click is instant too.
         startWarmup(ctx, invokerCtx.userId, channelId).catch(() => {});
       } else {
