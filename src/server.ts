@@ -360,6 +360,7 @@ type TWarmup = {
   channelId: number;
   audioSsrc: number;
   ip: string;
+  ready: boolean;
 };
 
 const warmupByUser = new Map<number, TWarmup>();
@@ -412,19 +413,22 @@ const startWarmup = async (ctx: PluginContext, userId: number, channelId: number
 
     const streamHandle = ctx.voice.createStream({
       channelId,
-      title: '🔊 Soundboard (ready)',
+      title: '🔊 Soundboard',
       key: `soundboard-warmup-${userId}`,
       producers: { audio: producer }
     });
 
-    warmupByUser.set(userId, {
+    // Store in the map so teardownWarmupForUser can clean up during the wait.
+    const warmupEntry: TWarmup = {
       transport,
       producer,
       streamHandleRemove: streamHandle.remove,
       channelId,
       audioSsrc,
-      ip
-    });
+      ip,
+      ready: false
+    };
+    warmupByUser.set(userId, warmupEntry);
 
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(resolve, 500);
@@ -434,6 +438,10 @@ const startWarmup = async (ctx: PluginContext, userId: number, channelId: number
         resolve();
       });
     });
+
+    // Only mark as usable if this warmup wasn't torn down or replaced while waiting.
+    if (warmupByUser.get(userId) !== warmupEntry) return;
+    warmupEntry.ready = true;
 
     ctx.debug('Soundboard warmup ready', { userId, channelId });
   } catch (err) {
@@ -604,7 +612,7 @@ const onLoad = async (ctx: PluginContext) => {
       // Use a pre-warmed setup if one is ready for this user/channel so the
       // consumer is already subscribed and ffmpeg can start without any delay.
       const warmup = warmupByUser.get(invokerCtx.userId);
-      const useWarmup = warmup !== undefined && warmup.channelId === channelId;
+      const useWarmup = warmup !== undefined && warmup.channelId === channelId && warmup.ready;
 
       let transport: PlainTransport;
       let producer: Producer;
@@ -615,18 +623,31 @@ const onLoad = async (ctx: PluginContext) => {
       if (useWarmup) {
         warmupByUser.delete(invokerCtx.userId);
         ({ transport, producer, audioSsrc, ip } = warmup);
-        // Swap the warmup stream title to the actual sound name. The consumer
-        // remains subscribed at the mediasoup level (it tracks the producer's
-        // SSRC, not the stream wrapper), so this is a metadata-only change and
-        // does not interrupt the audio path.
-        warmup.streamHandleRemove();
-        const streamHandle = ctx.voice.createStream({
+
+        // Create the sound-name stream while the warmup stream is still alive.
+        // This keeps the producer reachable so the client can subscribe to the
+        // new stream before we tear down the old one.
+        const soundStreamHandle = ctx.voice.createStream({
           channelId,
           title: `🔊 ${sound.name}`,
           key: `soundboard-${playbackId}`,
           producers: { audio: producer }
         });
-        streamHandleRemove = streamHandle.remove;
+        streamHandleRemove = soundStreamHandle.remove;
+
+        // Wait for a consumer on the new stream, then remove the warmup stream.
+        // Using the warmup means the mediasoup pipeline is already warm, so
+        // the new subscription typically completes in < 100 ms.
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(resolve, 300);
+          const obs = (producer as unknown as { observer?: { once(event: 'newconsumer', cb: () => void): void } }).observer;
+          obs?.once('newconsumer', () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+        });
+        warmup.streamHandleRemove();
+
         // Re-warm in the background so the next click is instant too.
         startWarmup(ctx, invokerCtx.userId, channelId).catch(() => {});
       } else {
