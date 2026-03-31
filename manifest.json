@@ -4,7 +4,7 @@
   "version": "0.0.3",
   "sdkVersion": 1,
   "author": "rinky-dinky",
-  "description": "In-app soundboard plugin for Sharkord voice calls.",
+  "description": "Soundboard plugin for voice calls.",
   "homepage": "https://github.com/rinky-dinky/sharkord-soundboard",
   "logo": "https://i.imgur.com/WQBHYh3.png"
 }
