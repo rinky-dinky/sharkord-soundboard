@@ -207,8 +207,9 @@ const EmojiPicker = ({
   const dropdown = dropdownPos ? (
     <div
       ref={dropdownRef}
-      style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: 296, zIndex: 9999 }}
+      style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: 296, zIndex: 2147483647 }}
       className="rounded border bg-background shadow-md"
+      data-emoji-picker-dropdown
     >
       {hasCustom ? (
         <div className="flex border-b text-xs">
