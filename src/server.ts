@@ -337,16 +337,18 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
 // ---------------------------------------------------------------------------
 
 type TRuntimePlayback = {
+  playbackId: string;
+  userId: number;
   producer: Producer;
   transport: PlainTransport;
   streamHandleRemove: () => void;
   ffmpegPid?: number;
 };
 
-const activePlaybackByUser = new Map<number, TRuntimePlayback>();
+const activePlaybacks = new Map<string, TRuntimePlayback>();
 
-const stopPlaybackForUser = (ctx: PluginContext, userId: number) => {
-  const playback = activePlaybackByUser.get(userId);
+const stopPlayback = (ctx: PluginContext, playbackId: string) => {
+  const playback = activePlaybacks.get(playbackId);
   if (!playback) return;
 
   playback.streamHandleRemove();
@@ -361,8 +363,9 @@ const stopPlaybackForUser = (ctx: PluginContext, userId: number) => {
     }
   }
 
-  activePlaybackByUser.delete(userId);
+  activePlaybacks.delete(playbackId);
 };
+
 
 const onLoad = async (ctx: PluginContext) => {
   ctx.log('Soundboard plugin loaded');
@@ -483,7 +486,7 @@ const onLoad = async (ctx: PluginContext) => {
       const sound = sounds.find((entry) => entry.id === payload.soundId);
       if (!sound) throw new Error('Sound not found.');
 
-      stopPlaybackForUser(ctx, invokerCtx.userId);
+      const playbackId = `${invokerCtx.userId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
       const router = ctx.voice.getRouter(channelId);
       const { announcedAddress, ip } = ctx.voice.getListenInfo();
@@ -523,7 +526,7 @@ const onLoad = async (ctx: PluginContext) => {
       const streamHandle = ctx.voice.createStream({
         channelId,
         title: `🔊 ${sound.name}`,
-        key: `soundboard-${invokerCtx.userId}`,
+        key: `soundboard-${playbackId}`,
         producers: { audio: producer }
       });
 
@@ -533,6 +536,11 @@ const onLoad = async (ctx: PluginContext) => {
         '-vn',
         '-ac', '2',
         '-ar', '48000',
+        // Prepend 300 ms of silence so the RTP pathway and jitter buffer are
+        // fully initialised before real audio arrives. Without this, the first
+        // packets can be dropped because mediasoup is still setting up the
+        // comedia remote address from the very first packet.
+        '-af', 'adelay=300|300',
         '-c:a', 'libopus',
         '-application', 'audio',
         '-payload_type', `${RTP_AUDIO_PAYLOAD_TYPE}`,
@@ -541,7 +549,9 @@ const onLoad = async (ctx: PluginContext) => {
         `rtp://${ip}:${transport.tuple.localPort}?pkt_size=1200`
       ]);
 
-      activePlaybackByUser.set(invokerCtx.userId, {
+      activePlaybacks.set(playbackId, {
+        playbackId,
+        userId: invokerCtx.userId,
         producer,
         transport,
         streamHandleRemove: streamHandle.remove,
@@ -560,7 +570,10 @@ const onLoad = async (ctx: PluginContext) => {
 
       ffmpeg.on('exit', () => {
         ctx.log('ffmpeg playback ended', { userId: invokerCtx.userId, channelId });
-        stopPlaybackForUser(ctx, invokerCtx.userId);
+        // Stop only this specific playback, not all playbacks for the user.
+        // Previously this called stopPlaybackForUser which could accidentally
+        // kill a concurrently-started new playback.
+        stopPlayback(ctx, playbackId);
       });
 
       return { ok: true };
@@ -569,8 +582,8 @@ const onLoad = async (ctx: PluginContext) => {
 };
 
 const onUnload = (ctx: PluginContext) => {
-  for (const userId of activePlaybackByUser.keys()) {
-    stopPlaybackForUser(ctx, userId);
+  for (const playbackId of activePlaybacks.keys()) {
+    stopPlayback(ctx, playbackId);
   }
   ctx.ui.disable();
   ctx.log('Soundboard plugin unloaded');
