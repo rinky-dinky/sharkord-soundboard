@@ -4,7 +4,7 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard
 
 ## Features
 
-- Quick-open soundboard button in the top-right plugin slot that opens a floating panel.
+- Soundboard button in the top-right plugin slot.
 - Click-to-play sounds in the user's currently active voice channel.
 - Upload audio files directly from the soundboard panel.
 - Sounds are stored locally in the plugin directory and shared with all users.
@@ -32,7 +32,7 @@ Until then:
 ## Playing sounds
 
 1. Join a voice channel.
-2. Click the soundboard launcher button in the top-right bar to open the floating panel.
+2. Click the soundboard launcher button in the top-right bar.
 3. Click any sound button to play it in your active call.
 
 ## Stopping sounds
