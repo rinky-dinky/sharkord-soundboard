@@ -80,7 +80,7 @@ const clientGlobals: BunPlugin = {
 
 await Promise.all([
   Bun.build({
-    entrypoints: ['src/server.ts'],
+    entrypoints: ['src/server/index.ts'],
     outdir: `${outdir}/server`,
     naming: 'index.js',
     target: 'bun',
@@ -89,7 +89,7 @@ await Promise.all([
     external: ['react', 'react-dom', '@sharkord/plugin-sdk']
   }),
   Bun.build({
-    entrypoints: ['src/client.ts'],
+    entrypoints: ['src/client/index.ts'],
     outdir: `${outdir}/client`,
     naming: 'index.js',
     target: 'browser',
