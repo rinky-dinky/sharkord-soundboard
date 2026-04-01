@@ -1,6 +1,6 @@
 # sharkord-soundboard
 
-A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard panel for playing shared sound effects in voice channels.
+A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard panel for playing sound effects in voice channels.
 
 ## Features
 
@@ -22,11 +22,11 @@ Until then:
 
 1. Join a voice channel.
 2. Click the soundboard launcher button in the top-right bar to open the floating panel.
-3. Click **Upload** (or the add button).
+3. Click **Add Sound**.
 4. Enter:
    - **Sound name**
    - **Emoji**
-   - **Audio file** (uploaded directly from your device)
+   - **Audio file**
 5. Click **Add**.
 
 ## Playing sounds
@@ -35,7 +35,12 @@ Until then:
 2. Click the soundboard launcher button in the top-right bar to open the floating panel.
 3. Click any sound button to play it in your active call.
 
-<img width="380" height="368" alt="image" src="https://github.com/user-attachments/assets/5df58d10-2009-4f78-8a0e-d90563fffeba" />
+## Screenshots
+
+<img align="center" width="378" height="574" alt="image" src="https://github.com/user-attachments/assets/2b800825-163b-4917-a46b-bb4b385f214e" /> 
+<img align="center" width="378" height="575" alt="image" src="https://github.com/user-attachments/assets/4a0a7e79-9ed6-4553-acd0-ce6d13d4dace" />
+
+
 
 ## ⚠️ Note ⚠️
 
