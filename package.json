@@ -9,7 +9,7 @@
       "client": "client.js"
     },
     "author": "rinky-dinky",
-    "description": "SoundDrop plugin for voice calls.",
+    "description": "Adds a soundboard to voice channels.",
     "homepage": "https://github.com/rinky-dinky/sharkord-soundboard",
     "logo": "https://i.imgur.com/WQBHYh3.png"
   },
