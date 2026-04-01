@@ -1,4 +1,4 @@
-# sharkord-soundboard
+# SoundDrop
 
 A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard panel for playing sound effects in voice channels.
 
@@ -11,7 +11,7 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard
 
 ## Install
 
-> **Coming soon:** sharkord-soundboard will be available in the Sharkord marketplace for a one-click install — no manual steps required.
+> **Coming soon:** SoundDrop will be available in the Sharkord marketplace for a one-click install — no manual steps required.
 
 Until then:
 
