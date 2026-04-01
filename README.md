@@ -15,7 +15,7 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard
 
 Until then:
 
-1. Download the latest `sharkord-soundboard-0.0.3.tar.gz` from the GitHub Releases page.
+1. Download the latest `sharkord-soundboard-0.0.4.tar.gz` from the GitHub Releases page.
 2. Extract it into your Sharkord plugins folder.
 
 ## To add a sound to the soundboard
@@ -34,6 +34,10 @@ Until then:
 1. Join a voice channel.
 2. Click the soundboard launcher button in the top-right bar to open the floating panel.
 3. Click any sound button to play it in your active call.
+
+## Stopping sounds
+
+Use the `/stop_sounds` command to immediately stop all currently playing sounds.
 
 ## Screenshots
 
