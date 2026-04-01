@@ -78,7 +78,7 @@ const SoundboardLauncher = () => {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Open Soundboard"
+        title="Open SoundDrop"
         className="flex h-8 w-8 items-center justify-center rounded p-0 text-sm leading-none text-foreground/70 hover:bg-accent hover:text-foreground"
         aria-expanded={open}
         aria-haspopup="dialog"
@@ -97,12 +97,12 @@ const SoundboardLauncher = () => {
             <div
               ref={panelRef}
               role="dialog"
-              aria-label="Soundboard"
+              aria-label="SoundDrop"
               style={panelStyle}
               className="h-[28rem] rounded-lg border bg-background shadow-2xl"
             >
               <div className="flex items-center justify-between border-b px-3 py-2">
-                <p className="text-sm font-medium">Soundboard</p>
+                <p className="text-sm font-medium">SoundDrop</p>
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
@@ -119,7 +119,7 @@ const SoundboardLauncher = () => {
                   <button
                     type="button"
                     onClick={handleClose}
-                    title="Close Soundboard"
+                    title="Close SoundDrop"
                     className="rounded px-2 py-1 hover:bg-accent"
                   >
                     ✕

@@ -1,10 +1,10 @@
 {
   "id": "sharkord-soundboard",
-  "name": "Soundboard",
-  "version": "0.0.3",
+  "name": "SoundDrop",
+  "version": "0.0.4",
   "sdkVersion": 1,
   "author": "rinky-dinky",
-  "description": "Soundboard plugin for voice calls.",
+  "description": "Adds a soundboard to voice channels.",
   "homepage": "https://github.com/rinky-dinky/sharkord-soundboard",
   "logo": "https://i.imgur.com/WQBHYh3.png"
 }
