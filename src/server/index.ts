@@ -528,9 +528,9 @@ const startWarmup = async (ctx: PluginContext, userId: number, channelId: number
     if (warmupByUser.get(userId) !== warmupEntry) return;
     warmupEntry.ready = true;
 
-    ctx.debug('Soundboard warmup ready', { userId, channelId });
+    ctx.debug('SoundDrop warmup ready', { userId, channelId });
   } catch (err) {
-    ctx.debug('Soundboard warmup failed', err);
+    ctx.debug('SoundDrop warmup failed', err);
     transport?.close();
     warmupByUser.delete(userId);
   }
@@ -557,7 +557,7 @@ const stopPlayback = (ctx: PluginContext, playbackId: string) => {
 
 
 const onLoad = async (ctx: PluginContext) => {
-  ctx.log('Soundboard plugin loaded');
+  ctx.log('SoundDrop plugin loaded');
 
   const ffmpegBinaryPath = await ensureFfmpegBinary(ctx.path, ctx.log);
   ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
@@ -838,7 +838,7 @@ const onUnload = (ctx: PluginContext) => {
     teardownWarmupForUser(ctx, userId);
   }
   ctx.ui.disable();
-  ctx.log('Soundboard plugin unloaded');
+  ctx.log('SoundDrop plugin unloaded');
 };
 
 export { onLoad, onUnload };
