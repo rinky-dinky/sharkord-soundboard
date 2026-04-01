@@ -674,6 +674,17 @@ const onLoad = async (ctx: PluginContext) => {
     }
   });
 
+  ctx.commands.register({
+    name: 'stop_sounds',
+    description: 'Stop all currently playing soundboard sounds',
+    async execute(_invokerCtx: TInvokerContext) {
+      for (const playbackId of [...activePlaybacks.keys()]) {
+        stopPlayback(ctx, playbackId);
+      }
+      return { ok: true };
+    }
+  });
+
   ctx.actions.register({
     name: 'play_sound',
     async execute(invokerCtx: TInvokerContext, payload: { soundId: string }) {
