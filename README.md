@@ -18,20 +18,6 @@ Until then:
 1. Download the latest `sharkord-soundboard-0.0.3.tar.gz` from the GitHub Releases page.
 2. Extract it into your Sharkord plugins folder.
 
-That's it. ffmpeg is downloaded automatically on first load.
-
-Expected layout:
-
-```
-<sharkord-plugins-folder>/
-  sharkord-soundboard/
-    manifest.json
-    server/
-      index.js
-    client/
-      index.js
-```
-
 ## To add a sound to the soundboard
 
 1. Join a voice channel.
