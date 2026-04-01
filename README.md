@@ -15,7 +15,7 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard
 
 Until then:
 
-1. Download the latest `sharkord-soundboard-0.0.4.tar.gz` from the GitHub Releases page.
+1. Download the latest `sharkord-soundboard-0.0.4.tar.gz` from the [Releases](https://github.com/rinky-dinky/sharkord-soundboard/releases) page.
 2. Extract it into your Sharkord plugins folder.
 
 ## To add a sound to the soundboard
