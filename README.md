@@ -11,8 +11,12 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard
 
 ## Install
 
-1. Download the latest `sharkord-soundboard.zip` from the GitHub Releases page.
-2. Unzip it into your Sharkord plugins folder.
+> **Coming soon:** sharkord-soundboard will be available in the Sharkord marketplace for a one-click install — no manual steps required.
+
+Until then:
+
+1. Download the latest `sharkord-soundboard-0.0.3.tar.gz` from the GitHub Releases page.
+2. Extract it into your Sharkord plugins folder.
 
 That's it. ffmpeg is downloaded automatically on first load.
 
