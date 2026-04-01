@@ -41,8 +41,7 @@ Use the `/stop_sounds` command to immediately stop all currently playing sounds.
 
 ## Screenshots
 
-<img align="center" width="378" height="574" alt="image" src="https://github.com/user-attachments/assets/2b800825-163b-4917-a46b-bb4b385f214e" /> 
-<img align="center" width="378" height="575" alt="image" src="https://github.com/user-attachments/assets/4a0a7e79-9ed6-4553-acd0-ce6d13d4dace" />
+<img align="center" width="370" height="574" alt="image" src="https://i.imgur.com/IPnNPGz.jpeg" /> <img align="center" width="370" height="574" alt="image" src="https://i.imgur.com/yVj0ewK.jpeg" /> 
 
 
 
