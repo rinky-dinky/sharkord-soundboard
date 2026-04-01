@@ -1,69 +1,45 @@
 # sharkord-soundboard
 
-A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard panel for playing shared sound effects in voice channels.
+A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard panel for playing sound effects in voice channels.
 
 ## Features
 
 - Quick-open soundboard button in the top-right plugin slot that opens a floating panel.
 - Click-to-play sounds in the user's currently active voice channel.
-- Upload form for audio file URL + display name + emoji.
-- Shared sounds are persisted in plugin settings and mirrored to a public JSON URL for client sync.
+- Upload audio files directly from the soundboard panel.
+- Sounds are stored locally in the plugin directory and shared with all users.
 
 ## Install
 
-1. Download the latest `sharkord-soundboard.zip` from the GitHub Releases page.
-2. Unzip it into your Sharkord plugins folder.
-3. Download ffmpeg from [ffmpeg.org/download.html](https://ffmpeg.org/download.html), then add the binary named `ffmpeg` into the plugin `bin/` directory.
-4. From inside the `bin` directory, run `chmod +x ./ffmpeg` to make it executable.
+> **Coming soon:** sharkord-soundboard will be available in the Sharkord marketplace for a one-click install — no manual steps required.
 
-Expected layout:
+Until then:
 
-```
-<sharkord-plugins-folder>/
-  sharkord-soundboard/
-    manifest.json
-    server/
-      index.js
-    client/
-      index.js
-    bin/
-      ffmpeg
-```
-
-If ffmpeg is missing or not executable, the plugin will fail to load.
-
-## First-time setup (required)
-
-The soundboard UI reads shared sounds from a public JSON mirror file. This is due to current limitations in the Sharkord plugin SDK.
-
-1. Download the blank `soundboard-sounds.json` file from this plugin's GitHub release assets.
-2. In Sharkord, attach `soundboard-sounds.json` to a message in any text channel (must be a public channel, not private), then send the message.
-
-### Optional plugin setting
-
-In plugin settings, `Public mirror filename` defaults to `soundboard-sounds.json`.
-Keep this matching the uploaded JSON filename unless you intentionally changed it.
+1. Download the latest `sharkord-soundboard-0.0.3.tar.gz` from the GitHub Releases page.
+2. Extract it into your Sharkord plugins folder.
 
 ## To add a sound to the soundboard
 
-
-1. Attach an audio file to a message in a text channel, then send the message.
-2. Right-click the sent audio attachment and click **Copy link address**.
-3. Open the soundboard panel.
+1. Join a voice channel.
+2. Click the soundboard launcher button in the top-right bar to open the floating panel.
+3. Click **Add Sound**.
 4. Enter:
    - **Sound name**
    - **Emoji**
-   - **Direct file URL** (the copied attachment link)
+   - **Audio file**
 5. Click **Add**.
-6. Reopen the panel after adding sounds if you need to refresh the shared list.
 
 ## Playing sounds
 
 1. Join a voice channel.
-2. Click the soundboard launcher button in the top-right bar to open the floating soundboard panel.
+2. Click the soundboard launcher button in the top-right bar to open the floating panel.
 3. Click any sound button to play it in your active call.
 
-<img width="380" height="368" alt="image" src="https://github.com/user-attachments/assets/5df58d10-2009-4f78-8a0e-d90563fffeba" />
+## Screenshots
+
+<img align="center" width="378" height="574" alt="image" src="https://github.com/user-attachments/assets/2b800825-163b-4917-a46b-bb4b385f214e" /> 
+<img align="center" width="378" height="575" alt="image" src="https://github.com/user-attachments/assets/4a0a7e79-9ed6-4553-acd0-ce6d13d4dace" />
+
 
 
 ## ⚠️ Note ⚠️
