@@ -3,11 +3,21 @@ import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { SoundboardPanel } from './soundboard-panel';
 
+const useSharkordStore = () => {
+  const store = window.__SHARKORD_STORE__;
+  const [state, setState] = useState(() => store.getState());
+  useEffect(() => store.subscribe(() => setState(store.getState())), [store]);
+  return { state, actions: store.actions };
+};
+
 const SoundboardLauncher = () => {
+  const { actions } = useSharkordStore();
+  const { executePluginAction } = actions;
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isAddingSound, setIsAddingSound] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({});
   const containerRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -108,6 +118,23 @@ const SoundboardLauncher = () => {
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
+                    onClick={() => executePluginAction('stop_sounds').catch(() => {})}
+                    title="Stop all sounds"
+                    style={{
+                      opacity: isPlaying ? 1 : 0,
+                      pointerEvents: isPlaying ? 'auto' : 'none',
+                      transition: 'opacity 300ms ease',
+                      color: 'rgba(239,68,68,0.85)'
+                    }}
+                    className="rounded px-1.5 py-1 hover:bg-accent"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                      <path d="M15 9l-6 6M9 9l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setIsEditing((v) => !v)}
                     title={isEditing ? 'Done editing' : 'Edit sounds'}
                     aria-pressed={isEditing}
@@ -136,6 +163,7 @@ const SoundboardLauncher = () => {
                   isEditing={isEditing}
                   isAddingSound={isAddingSound}
                   onAddSoundDone={() => setIsAddingSound(false)}
+                  onPlayingChange={setIsPlaying}
                 />
               </div>
             </div>,

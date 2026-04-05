@@ -396,7 +396,7 @@ const EditableCard = ({
 
 // ---------------------------------------------------------------------------
 
-const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditing: boolean; isAddingSound: boolean; onAddSoundDone: () => void }) => {
+const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingChange }: { isEditing: boolean; isAddingSound: boolean; onAddSoundDone: () => void; onPlayingChange?: (isPlaying: boolean) => void }) => {
   const { state, actions } = useSharkordStore();
   const { currentVoiceChannelId, emojis: customEmojis = [] } = state;
   const { executePluginAction } = actions;
@@ -410,6 +410,8 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
   const [playingSoundIds, setPlayingSoundIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const playingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  useEffect(() => { onPlayingChangeRef.current = onPlayingChange; });
 
   useEffect(() => {
     const id = 'sounddrop-scrollbar-style';
@@ -455,8 +457,13 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
         clearInterval(playingPollRef.current);
         playingPollRef.current = null;
       }
+      onPlayingChangeRef.current?.(false);
     };
   }, []);
+
+  useEffect(() => {
+    onPlayingChangeRef.current?.(playingSoundIds.size > 0);
+  }, [playingSoundIds]);
 
   const syncSounds = useCallback(async () => {
     setLoading(true);

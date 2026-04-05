@@ -687,6 +687,16 @@ const onLoad = async (ctx: PluginContext) => {
   });
 
   ctx.actions.register({
+    name: 'stop_sounds',
+    async execute(_invokerCtx: TInvokerContext) {
+      for (const playbackId of [...activePlaybacks.keys()]) {
+        stopPlayback(ctx, playbackId);
+      }
+      return { ok: true };
+    }
+  });
+
+  ctx.actions.register({
     name: 'play_sound',
     async execute(invokerCtx: TInvokerContext, payload: { soundId: string }) {
       ctx.debug('Action play_sound invoked', {
