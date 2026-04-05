@@ -513,11 +513,11 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
   }, [executePluginAction]);
 
   return (
-    <div className="flex-1 min-h-0 p-4 flex flex-col gap-3 overflow-hidden">
+    <div className="p-4 flex flex-col gap-3">
       {isEditing && (
         <p className="text-sm opacity-70 shrink-0">Edit names and emojis. Tap the trash icon twice to delete.</p>
       )}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="overflow-y-auto" style={{ maxHeight: '23rem' }}>
         {!isEditing ? (
           <div className="grid grid-cols-2 gap-2">
             {sounds.map((sound) => (
