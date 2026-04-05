@@ -415,10 +415,10 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
     const style = document.createElement('style');
     style.id = id;
     style.textContent = `
-      .sounddrop-scroll::-webkit-scrollbar { width: 4px; }
+      .sounddrop-scroll::-webkit-scrollbar { width: 2px; }
       .sounddrop-scroll::-webkit-scrollbar-track { background: transparent; }
-      .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.35); border-radius: 4px; }
-      .sounddrop-scroll::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.6); }
+      .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.5); border-radius: 0; }
+      .sounddrop-scroll::-webkit-scrollbar-button { display: none; }
     `;
     document.head.appendChild(style);
   }, []);
@@ -531,7 +531,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       {isEditing && (
         <p className="text-sm opacity-70 shrink-0">Edit names and emojis. Tap the trash icon twice to delete.</p>
       )}
-      <div className="sounddrop-scroll overflow-y-auto pr-2" style={{ maxHeight: '25rem' }}>
+      <div className="sounddrop-scroll overflow-y-auto pr-2" style={{ maxHeight: '24rem' }}>
         {!isEditing ? (
           <div className="grid grid-cols-2 gap-2">
             {sounds.map((sound) => (
