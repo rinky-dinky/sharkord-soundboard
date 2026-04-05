@@ -358,7 +358,7 @@ const EditableCard = ({
   };
 
   return (
-    <div className="flex flex-col gap-1 rounded border p-1.5">
+    <div className="sounddrop-cell flex flex-col gap-1 rounded p-1.5">
       <div className="flex gap-1 items-center">
         {/* Trash */}
         <button
@@ -424,10 +424,10 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       .sounddrop-scroll::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
       .sounddrop-scroll::-webkit-scrollbar-corner { background: transparent; }
       .sounddrop-cell { background: rgba(128,128,128,0.18) !important; border: 1px solid transparent !important; transition: background 200ms ease, border-color 600ms ease; }
-      .sounddrop-cell:not([disabled]):hover { background: rgba(128,128,128,0.32) !important; }
+      .sounddrop-cell:not([disabled]):hover, div.sounddrop-cell:hover { background: rgba(128,128,128,0.32) !important; }
       @keyframes sounddrop-shimmer {
         0%   { box-shadow: 0 0 0 1px rgba(239,68,68,0.0); }
-        50%  { box-shadow: 0 0 0 1px rgba(239,68,68,0.5), 0 0 4px rgba(239,68,68,0.18); }
+        50%  { box-shadow: 0 0 0 1px rgba(239,68,68,0.35), 0 0 3px rgba(239,68,68,0.12); }
         100% { box-shadow: 0 0 0 1px rgba(239,68,68,0.0); }
       }
       .sounddrop-playing {
@@ -591,7 +591,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
           sounds.length === 0 ? (
             <p className="text-sm opacity-60">No sounds yet.</p>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2" style={{ padding: '2px' }}>
               {sounds.map((sound) => (
                 <EditableCard
                   key={sound.id}
