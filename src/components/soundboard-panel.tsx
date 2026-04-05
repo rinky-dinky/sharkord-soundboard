@@ -423,7 +423,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.5); border-radius: 0; border: none; box-shadow: none; }
       .sounddrop-scroll::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
       .sounddrop-scroll::-webkit-scrollbar-corner { background: transparent; }
-      .sounddrop-cell { background: rgba(128,128,128,0.18) !important; transition: background 200ms ease, border-color 600ms ease; }
+      .sounddrop-cell { background: rgba(128,128,128,0.18) !important; border: 1px solid transparent !important; transition: background 200ms ease, border-color 600ms ease; }
       .sounddrop-cell:not([disabled]):hover { background: rgba(128,128,128,0.32) !important; }
       @keyframes sounddrop-shimmer {
         0%   { box-shadow: 0 0 0 1px rgba(239,68,68,0.0); }
@@ -574,13 +574,13 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       )}
       <div className="sounddrop-scroll overflow-y-auto pr-2 pb-4" style={{ maxHeight: '23.8rem' }}>
         {!isEditing ? (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2" style={{ padding: '2px' }}>
             {sounds.map((sound) => (
               <button
                 key={sound.id}
                 disabled={!currentVoiceChannelId || loading}
                 onClick={() => onPlay(sound.id)}
-                className={`sounddrop-cell rounded border px-2 py-1 text-sm disabled:opacity-50 flex items-center gap-1.5 justify-center${playingSoundIds.has(sound.id) ? ' sounddrop-playing' : ''}`}
+                className={`sounddrop-cell rounded px-2 py-1 text-sm disabled:opacity-50 flex items-center gap-1.5 justify-center${playingSoundIds.has(sound.id) ? ' sounddrop-playing' : ''}`}
               >
                 <EmojiDisplay value={sound.emoji} className="h-5 w-5 shrink-0" />
                 <span className="truncate">{sound.name}</span>
