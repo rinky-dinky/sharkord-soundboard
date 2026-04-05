@@ -396,7 +396,7 @@ const EditableCard = ({
 
 // ---------------------------------------------------------------------------
 
-const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
+const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditing: boolean; isAddingSound: boolean; onAddSoundDone: () => void }) => {
   const { state, actions } = useSharkordStore();
   const { currentVoiceChannelId, emojis: customEmojis = [] } = state;
   const { executePluginAction } = actions;
@@ -439,6 +439,15 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
     syncSounds().catch(() => {});
   }, [syncSounds]);
 
+  useEffect(() => {
+    if (!isAddingSound) {
+      setName('');
+      setEmoji('🦈');
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [isAddingSound]);
+
   const onUpload = useCallback(async () => {
     if (!file) { setError('Select an audio file first.'); return; }
     setLoading(true);
@@ -462,12 +471,13 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
       setFile(null);
       setName('');
       if (fileInputRef.current) fileInputRef.current.value = '';
+      onAddSoundDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [emoji, executePluginAction, file, name]);
+  }, [emoji, executePluginAction, file, name, onAddSoundDone]);
 
   const onPlay = useCallback(async (soundId: string) => {
     setLoading(true);
@@ -565,9 +575,8 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
         </>
       )}
 
-      <details className="border rounded-md p-2" open={false}>
-        <summary className="cursor-pointer select-none font-medium">Add Sound</summary>
-        <div className="mt-2 flex flex-col gap-2">
+      {isAddingSound ? (
+        <div className="border rounded-md p-2 flex flex-col gap-2">
           <div className="flex gap-2 items-center">
             <input
               value={name}
@@ -603,7 +612,7 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
             Add
           </button>
         </div>
-      </details>
+      ) : null}
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
     </div>
