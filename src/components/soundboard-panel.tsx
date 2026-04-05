@@ -533,7 +533,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       {isEditing && (
         <p className="text-sm opacity-70 shrink-0">Edit names and emojis. Tap the trash icon twice to delete.</p>
       )}
-      <div className="sounddrop-scroll overflow-y-auto pr-2 pb-4" style={{ maxHeight: '23.8rem' }}>
+      <div className="sounddrop-scroll overflow-y-auto pr-2 pb-3" style={{ maxHeight: '23.8rem' }}>
         {!isEditing ? (
           <div className="grid grid-cols-2 gap-2">
             {sounds.map((sound) => (
