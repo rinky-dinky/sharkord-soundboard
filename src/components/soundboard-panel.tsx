@@ -409,6 +409,20 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    const id = 'sounddrop-scrollbar-style';
+    if (document.getElementById(id)) return;
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = `
+      .sounddrop-scroll::-webkit-scrollbar { width: 4px; }
+      .sounddrop-scroll::-webkit-scrollbar-track { background: transparent; }
+      .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.35); border-radius: 4px; }
+      .sounddrop-scroll::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.6); }
+    `;
+    document.head.appendChild(style);
+  }, []);
+
   // Pre-warm the RTP consumer whenever the panel is mounted in a voice channel,
   // or when the user switches channels. This hides the consumer-connection delay
   // behind the time the user spends browsing sounds, so playback feels instant.
@@ -517,7 +531,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       {isEditing && (
         <p className="text-sm opacity-70 shrink-0">Edit names and emojis. Tap the trash icon twice to delete.</p>
       )}
-      <div className="overflow-y-auto" style={{ maxHeight: '23rem' }}>
+      <div className="sounddrop-scroll overflow-y-auto pr-2" style={{ maxHeight: '25rem' }}>
         {!isEditing ? (
           <div className="grid grid-cols-2 gap-2">
             {sounds.map((sound) => (
