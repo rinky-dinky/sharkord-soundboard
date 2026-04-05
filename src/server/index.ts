@@ -6,7 +6,7 @@ import { inflateRaw } from 'node:zlib';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
 import type { TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from '../types';
 
-const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 2;
+const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 10;
 const RTP_AUDIO_PAYLOAD_TYPE = 111;
 
 const getSoundsDir = (pluginPath: string) => join(pluginPath, 'sounds');
