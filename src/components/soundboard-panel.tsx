@@ -423,16 +423,16 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.5); border-radius: 0; border: none; box-shadow: none; }
       .sounddrop-scroll::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
       .sounddrop-scroll::-webkit-scrollbar-corner { background: transparent; }
-      .sounddrop-cell { background: rgba(128,128,128,0.18) !important; transition: background 200ms ease; }
+      .sounddrop-cell { background: rgba(128,128,128,0.18) !important; transition: background 200ms ease, border-color 600ms ease; }
       .sounddrop-cell:not([disabled]):hover { background: rgba(128,128,128,0.32) !important; }
       @keyframes sounddrop-shimmer {
-        0%   { box-shadow: 0 0 0 1px rgba(239,68,68,0.9), 0 0 5px 1px rgba(239,68,68,0.25); }
-        50%  { box-shadow: 0 0 0 1px rgba(239,68,68,0.35), 0 0 8px 2px rgba(239,68,68,0.35); }
-        100% { box-shadow: 0 0 0 1px rgba(239,68,68,0.9), 0 0 5px 1px rgba(239,68,68,0.25); }
+        0%   { box-shadow: 0 0 0 1px rgba(239,68,68,0.0); }
+        50%  { box-shadow: 0 0 0 1px rgba(239,68,68,0.5), 0 0 4px rgba(239,68,68,0.18); }
+        100% { box-shadow: 0 0 0 1px rgba(239,68,68,0.0); }
       }
       .sounddrop-playing {
-        animation: sounddrop-shimmer 1.5s ease-in-out infinite;
-        border-color: rgba(239,68,68,0.6) !important;
+        animation: sounddrop-shimmer 2s ease-in-out infinite;
+        border-color: rgba(239,68,68,0.45) !important;
       }
     `;
     if (!existing) document.head.appendChild(style);
@@ -513,7 +513,6 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
   }, [emoji, executePluginAction, file, name, onAddSoundDone]);
 
   const onPlay = useCallback(async (soundId: string) => {
-    setLoading(true);
     setError(null);
     try {
       await executePluginAction('play_sound', { soundId });
@@ -545,8 +544,6 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       } else {
         setError(message);
       }
-    } finally {
-      setLoading(false);
     }
   }, [executePluginAction]);
 
