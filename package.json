@@ -1,6 +1,6 @@
 {
   "name": "sharkord-soundboard",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "module": "src/server.ts",
   "type": "module",
   "sharkord": {
