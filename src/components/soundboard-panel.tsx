@@ -396,7 +396,7 @@ const EditableCard = ({
 
 // ---------------------------------------------------------------------------
 
-const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditing: boolean; isAddingSound: boolean; onAddSoundDone: () => void }) => {
+const SoundboardPanel = ({ isEditing, onToggleEditing, isAddingSound, onToggleAddingSound, onAddSoundDone }: { isEditing: boolean; onToggleEditing: () => void; isAddingSound: boolean; onToggleAddingSound: () => void; onAddSoundDone: () => void }) => {
   const { state, actions } = useSharkordStore();
   const { currentVoiceChannelId, emojis: customEmojis = [] } = state;
   const { executePluginAction } = actions;
@@ -528,13 +528,41 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
 
   return (
     <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
-      {!isEditing ? (
-        <>
-          <p className="text-sm opacity-70">
-            {currentVoiceChannelId
+      <div className="flex items-center gap-2">
+        <p className="text-sm opacity-70 flex-1">
+          {isEditing
+            ? 'Edit names and emojis. Tap the trash icon twice to delete.'
+            : currentVoiceChannelId
               ? 'Click a sound to play it in your active voice call.'
               : 'Join a voice call to play sounds.'}
-          </p>
+        </p>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={onToggleEditing}
+            title={isEditing ? 'Done editing' : 'Edit sounds'}
+            aria-pressed={isEditing}
+            className={`rounded px-1.5 py-1 hover:bg-accent ${isEditing ? 'bg-accent text-foreground' : 'text-foreground/70'}`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={onToggleAddingSound}
+            title={isAddingSound ? 'Cancel adding sound' : 'Add sound'}
+            aria-pressed={isAddingSound}
+            className={`rounded px-1.5 py-1 hover:bg-accent ${isAddingSound ? 'bg-accent text-foreground' : 'text-foreground/70'}`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 4v16M4 12h16" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      {!isEditing ? (
+        <>
           <div className="grid grid-cols-2 gap-2">
             {visibleSounds.map((sound) => (
               <button
@@ -552,7 +580,6 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
         </>
       ) : (
         <>
-          <p className="text-sm opacity-70">Edit names and emojis. Tap the trash icon twice to delete.</p>
           {sounds.length === 0 ? (
             <p className="text-sm opacity-60">No sounds yet.</p>
           ) : (
