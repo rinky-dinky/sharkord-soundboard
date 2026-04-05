@@ -411,16 +411,18 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
 
   useEffect(() => {
     const id = 'sounddrop-scrollbar-style';
-    if (document.getElementById(id)) return;
-    const style = document.createElement('style');
+    const existing = document.getElementById(id);
+    const style = existing ?? document.createElement('style');
     style.id = id;
     style.textContent = `
+      .sounddrop-scroll { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.5) transparent; }
       .sounddrop-scroll::-webkit-scrollbar { width: 2px; }
-      .sounddrop-scroll::-webkit-scrollbar-track { background: transparent; }
-      .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.5); border-radius: 0; }
-      .sounddrop-scroll::-webkit-scrollbar-button { display: none; }
+      .sounddrop-scroll::-webkit-scrollbar-track { background: transparent; box-shadow: none; border: none; }
+      .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.5); border-radius: 0; border: none; box-shadow: none; }
+      .sounddrop-scroll::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
+      .sounddrop-scroll::-webkit-scrollbar-corner { background: transparent; }
     `;
-    document.head.appendChild(style);
+    if (!existing) document.head.appendChild(style);
   }, []);
 
   // Pre-warm the RTP consumer whenever the panel is mounted in a voice channel,
@@ -531,7 +533,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       {isEditing && (
         <p className="text-sm opacity-70 shrink-0">Edit names and emojis. Tap the trash icon twice to delete.</p>
       )}
-      <div className="sounddrop-scroll overflow-y-auto pr-2" style={{ maxHeight: '24rem' }}>
+      <div className="sounddrop-scroll overflow-y-auto pr-2" style={{ maxHeight: '23.8rem' }}>
         {!isEditing ? (
           <div className="grid grid-cols-2 gap-2">
             {sounds.map((sound) => (
