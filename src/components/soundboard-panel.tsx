@@ -407,7 +407,9 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [playingSoundIds, setPlayingSoundIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const playingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const id = 'sounddrop-scrollbar-style';
@@ -421,6 +423,15 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.5); border-radius: 0; border: none; box-shadow: none; }
       .sounddrop-scroll::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
       .sounddrop-scroll::-webkit-scrollbar-corner { background: transparent; }
+      @keyframes sounddrop-shimmer {
+        0%   { box-shadow: 0 0 0 2px rgba(239,68,68,0.9), 0 0 6px 1px rgba(239,68,68,0.3); }
+        50%  { box-shadow: 0 0 0 2px rgba(239,68,68,0.4), 0 0 12px 4px rgba(239,68,68,0.5); }
+        100% { box-shadow: 0 0 0 2px rgba(239,68,68,0.9), 0 0 6px 1px rgba(239,68,68,0.3); }
+      }
+      .sounddrop-playing {
+        animation: sounddrop-shimmer 1.5s ease-in-out infinite;
+        border-color: rgba(239,68,68,0.7) !important;
+      }
     `;
     if (!existing) document.head.appendChild(style);
   }, []);
@@ -435,6 +446,15 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
     executePluginActionRef.current('warmup_soundboard').catch(() => {});
     return () => { executePluginActionRef.current('teardown_soundboard').catch(() => {}); };
   }, [currentVoiceChannelId]);
+
+  useEffect(() => {
+    return () => {
+      if (playingPollRef.current !== null) {
+        clearInterval(playingPollRef.current);
+        playingPollRef.current = null;
+      }
+    };
+  }, []);
 
   const syncSounds = useCallback(async () => {
     setLoading(true);
@@ -495,6 +515,26 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
     setError(null);
     try {
       await executePluginAction('play_sound', { soundId });
+      setPlayingSoundIds((prev) => new Set([...prev, soundId]));
+
+      // Stop any existing poll and start a new one to track when the sound finishes.
+      if (playingPollRef.current !== null) clearInterval(playingPollRef.current);
+      playingPollRef.current = setInterval(async () => {
+        try {
+          const result = await executePluginAction<{ activeSoundIds: string[] }>('get_active_playbacks');
+          const active = new Set(result.activeSoundIds);
+          setPlayingSoundIds((prev) => {
+            const next = new Set([...prev].filter((id) => active.has(id)));
+            if (next.size === 0 && playingPollRef.current !== null) {
+              clearInterval(playingPollRef.current);
+              playingPollRef.current = null;
+            }
+            return next;
+          });
+        } catch {
+          // Ignore poll errors silently.
+        }
+      }, 750);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (/sound not found/i.test(message)) {
@@ -541,7 +581,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
                 key={sound.id}
                 disabled={!currentVoiceChannelId || loading}
                 onClick={() => onPlay(sound.id)}
-                className="rounded border px-2 py-1 text-sm disabled:opacity-50 flex items-center gap-1.5 justify-center"
+                className={`rounded border px-2 py-1 text-sm disabled:opacity-50 flex items-center gap-1.5 justify-center bg-white/10 hover:bg-white/20 transition-colors duration-200${playingSoundIds.has(sound.id) ? ' sounddrop-playing' : ''}`}
               >
                 <EmojiDisplay value={sound.emoji} className="h-5 w-5 shrink-0" />
                 <span className="truncate">{sound.name}</span>
