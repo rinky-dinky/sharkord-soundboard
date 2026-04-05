@@ -533,7 +533,7 @@ const SoundboardPanel = ({ isEditing, onToggleEditing, isAddingSound, onToggleAd
           {isEditing
             ? 'Edit names and emojis. Tap the trash icon twice to delete.'
             : currentVoiceChannelId
-              ? 'Click a sound to play it in your active voice call.'
+              ? ''
               : 'Join a voice call to play sounds.'}
         </p>
         <div className="flex items-center gap-1 shrink-0">
