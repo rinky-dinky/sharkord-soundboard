@@ -429,11 +429,11 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
       .sounddrop-cell:not([disabled]):hover, div.sounddrop-cell:hover { background: rgba(128,128,128,0.32) !important; }
       @keyframes sounddrop-shimmer {
         0%   { box-shadow: 0 0 0 1px rgba(239,68,68,0.0); }
-        50%  { box-shadow: 0 0 0 1px rgba(239,68,68,0.35), 0 0 3px rgba(239,68,68,0.12); }
+        30%  { box-shadow: 0 0 0 1px rgba(239,68,68,0.35), 0 0 3px rgba(239,68,68,0.12); }
         100% { box-shadow: 0 0 0 1px rgba(239,68,68,0.0); }
       }
       .sounddrop-playing {
-        animation: sounddrop-shimmer 2s ease-in-out infinite;
+        animation: sounddrop-shimmer 1.4s ease-in-out infinite;
         border-color: rgba(239,68,68,0.45) !important;
       }
     `;
@@ -519,30 +519,47 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
     }
   }, [emoji, executePluginAction, file, name, onAddSoundDone]);
 
+  const restartPoll = useCallback(() => {
+    if (playingPollRef.current !== null) clearInterval(playingPollRef.current);
+    playingPollRef.current = setInterval(async () => {
+      try {
+        const result = await executePluginAction<{ activeSoundIds: string[] }>('get_active_playbacks');
+        const active = new Set(result.activeSoundIds);
+        setPlayingSoundIds((prev) => {
+          const next = new Set([...prev].filter((id) => active.has(id)));
+          if (next.size === 0 && playingPollRef.current !== null) {
+            clearInterval(playingPollRef.current);
+            playingPollRef.current = null;
+          }
+          return next;
+        });
+      } catch {
+        // Ignore poll errors silently.
+      }
+    }, 750);
+  }, [executePluginAction]);
+
+  const restartPollRef = useRef(restartPoll);
+  useEffect(() => { restartPollRef.current = restartPoll; });
+
+  // On mount, restore playing state if sounds were active while the panel was closed.
+  useEffect(() => {
+    executePluginActionRef.current<{ activeSoundIds: string[] }>('get_active_playbacks')
+      .then((result) => {
+        if (result.activeSoundIds.length > 0) {
+          setPlayingSoundIds(new Set(result.activeSoundIds));
+          restartPollRef.current();
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const onPlay = useCallback(async (soundId: string) => {
     setError(null);
     try {
       await executePluginAction('play_sound', { soundId });
       setPlayingSoundIds((prev) => new Set([...prev, soundId]));
-
-      // Stop any existing poll and start a new one to track when the sound finishes.
-      if (playingPollRef.current !== null) clearInterval(playingPollRef.current);
-      playingPollRef.current = setInterval(async () => {
-        try {
-          const result = await executePluginAction<{ activeSoundIds: string[] }>('get_active_playbacks');
-          const active = new Set(result.activeSoundIds);
-          setPlayingSoundIds((prev) => {
-            const next = new Set([...prev].filter((id) => active.has(id)));
-            if (next.size === 0 && playingPollRef.current !== null) {
-              clearInterval(playingPollRef.current);
-              playingPollRef.current = null;
-            }
-            return next;
-          });
-        } catch {
-          // Ignore poll errors silently.
-        }
-      }, 750);
+      restartPollRef.current();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (/sound not found/i.test(message)) {

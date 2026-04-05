@@ -118,7 +118,7 @@ const SoundboardLauncher = () => {
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => executePluginAction('stop_sounds').catch(() => {})}
+                    onClick={() => { setIsPlaying(false); executePluginAction('stop_sounds').catch(() => {}); }}
                     title="Stop all sounds"
                     style={{
                       opacity: isPlaying ? 1 : 0,
