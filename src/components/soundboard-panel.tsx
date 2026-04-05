@@ -529,14 +529,14 @@ const SoundboardPanel = ({ isEditing, onToggleEditing, isAddingSound, onToggleAd
   return (
     <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
       <div className="flex items-center gap-2">
-        <p className="text-sm opacity-70 flex-1">
-          {isEditing
-            ? 'Edit names and emojis. Tap the trash icon twice to delete.'
-            : currentVoiceChannelId
-              ? ''
+        {(isEditing || !currentVoiceChannelId) && (
+          <p className="text-sm opacity-70 flex-1">
+            {isEditing
+              ? 'Edit names and emojis. Tap the trash icon twice to delete.'
               : 'Join a voice call to play sounds.'}
-        </p>
-        <div className="flex items-center gap-1 shrink-0">
+          </p>
+        )}
+        <div className="flex items-center gap-1 shrink-0 ml-auto">
           <button
             type="button"
             onClick={onToggleEditing}
