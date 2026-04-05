@@ -17,7 +17,7 @@ Automatic installation:
 
 Manual installation:
 
-1. Download the latest `sharkord-soundboard-0.0.5.tar.gz` from the [Releases](https://github.com/rinky-dinky/sharkord-soundboard/releases) page.
+1. Download the latest `sharkord-soundboard-0.0.4.tar.gz` from the [Releases](https://github.com/rinky-dinky/sharkord-soundboard/releases) page.
 2. Extract it into your Sharkord plugins folder.
 
 ## To add a sound to the soundboard
