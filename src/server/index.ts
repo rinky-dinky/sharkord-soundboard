@@ -423,6 +423,7 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
 
 type TRuntimePlayback = {
   playbackId: string;
+  soundId: string;
   userId: number;
   producer: Producer;
   transport: PlainTransport;
@@ -686,6 +687,16 @@ const onLoad = async (ctx: PluginContext) => {
   });
 
   ctx.actions.register({
+    name: 'stop_sounds',
+    async execute(_invokerCtx: TInvokerContext) {
+      for (const playbackId of [...activePlaybacks.keys()]) {
+        stopPlayback(ctx, playbackId);
+      }
+      return { ok: true };
+    }
+  });
+
+  ctx.actions.register({
     name: 'play_sound',
     async execute(invokerCtx: TInvokerContext, payload: { soundId: string }) {
       ctx.debug('Action play_sound invoked', {
@@ -770,6 +781,7 @@ const onLoad = async (ctx: PluginContext) => {
 
       const playbackEntry: TRuntimePlayback = {
         playbackId,
+        soundId: payload.soundId,
         userId: invokerCtx.userId,
         producer,
         transport,
@@ -826,6 +838,19 @@ const onLoad = async (ctx: PluginContext) => {
       });
 
       return { ok: true };
+    }
+  });
+
+  ctx.actions.register({
+    name: 'get_active_playbacks',
+    async execute(invokerCtx: TInvokerContext) {
+      const activeSoundIds: string[] = [];
+      for (const playback of activePlaybacks.values()) {
+        if (playback.userId === invokerCtx.userId) {
+          activeSoundIds.push(playback.soundId);
+        }
+      }
+      return { activeSoundIds };
     }
   });
 };

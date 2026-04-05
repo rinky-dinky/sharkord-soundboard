@@ -358,7 +358,7 @@ const EditableCard = ({
   };
 
   return (
-    <div className="flex flex-col gap-1 rounded border p-1.5">
+    <div className="sounddrop-cell flex flex-col gap-1 rounded p-1.5">
       <div className="flex gap-1 items-center">
         {/* Trash */}
         <button
@@ -396,7 +396,7 @@ const EditableCard = ({
 
 // ---------------------------------------------------------------------------
 
-const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditing: boolean; isAddingSound: boolean; onAddSoundDone: () => void }) => {
+const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingChange }: { isEditing: boolean; isAddingSound: boolean; onAddSoundDone: () => void; onPlayingChange?: (isPlaying: boolean) => void }) => {
   const { state, actions } = useSharkordStore();
   const { currentVoiceChannelId, emojis: customEmojis = [] } = state;
   const { executePluginAction } = actions;
@@ -407,7 +407,11 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [playingSoundIds, setPlayingSoundIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const playingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  useEffect(() => { onPlayingChangeRef.current = onPlayingChange; });
 
   useEffect(() => {
     const id = 'sounddrop-scrollbar-style';
@@ -421,6 +425,17 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.5); border-radius: 0; border: none; box-shadow: none; }
       .sounddrop-scroll::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
       .sounddrop-scroll::-webkit-scrollbar-corner { background: transparent; }
+      .sounddrop-cell { background: rgba(128,128,128,0.18) !important; border: 1px solid transparent !important; transition: background 200ms ease, border-color 600ms ease; }
+      .sounddrop-cell:not([disabled]):hover, div.sounddrop-cell:hover { background: rgba(128,128,128,0.32) !important; }
+      @keyframes sounddrop-shimmer {
+        0%   { box-shadow: 0 0 0 1px rgba(239,68,68,0.0); }
+        30%  { box-shadow: 0 0 0 1px rgba(239,68,68,0.35), 0 0 3px rgba(239,68,68,0.12); }
+        100% { box-shadow: 0 0 0 1px rgba(239,68,68,0.0); }
+      }
+      .sounddrop-playing {
+        animation: sounddrop-shimmer 1.4s ease-in-out infinite;
+        border-color: rgba(239,68,68,0.45) !important;
+      }
     `;
     if (!existing) document.head.appendChild(style);
   }, []);
@@ -435,6 +450,20 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
     executePluginActionRef.current('warmup_soundboard').catch(() => {});
     return () => { executePluginActionRef.current('teardown_soundboard').catch(() => {}); };
   }, [currentVoiceChannelId]);
+
+  useEffect(() => {
+    return () => {
+      if (playingPollRef.current !== null) {
+        clearInterval(playingPollRef.current);
+        playingPollRef.current = null;
+      }
+      onPlayingChangeRef.current?.(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    onPlayingChangeRef.current?.(playingSoundIds.size > 0);
+  }, [playingSoundIds]);
 
   const syncSounds = useCallback(async () => {
     setLoading(true);
@@ -490,11 +519,47 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
     }
   }, [emoji, executePluginAction, file, name, onAddSoundDone]);
 
+  const restartPoll = useCallback(() => {
+    if (playingPollRef.current !== null) clearInterval(playingPollRef.current);
+    playingPollRef.current = setInterval(async () => {
+      try {
+        const result = await executePluginAction<{ activeSoundIds: string[] }>('get_active_playbacks');
+        const active = new Set(result.activeSoundIds);
+        setPlayingSoundIds((prev) => {
+          const next = new Set([...prev].filter((id) => active.has(id)));
+          if (next.size === 0 && playingPollRef.current !== null) {
+            clearInterval(playingPollRef.current);
+            playingPollRef.current = null;
+          }
+          return next;
+        });
+      } catch {
+        // Ignore poll errors silently.
+      }
+    }, 750);
+  }, [executePluginAction]);
+
+  const restartPollRef = useRef(restartPoll);
+  useEffect(() => { restartPollRef.current = restartPoll; });
+
+  // On mount, restore playing state if sounds were active while the panel was closed.
+  useEffect(() => {
+    executePluginActionRef.current<{ activeSoundIds: string[] }>('get_active_playbacks')
+      .then((result) => {
+        if (result.activeSoundIds.length > 0) {
+          setPlayingSoundIds(new Set(result.activeSoundIds));
+          restartPollRef.current();
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const onPlay = useCallback(async (soundId: string) => {
-    setLoading(true);
     setError(null);
     try {
       await executePluginAction('play_sound', { soundId });
+      setPlayingSoundIds((prev) => new Set([...prev, soundId]));
+      restartPollRef.current();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (/sound not found/i.test(message)) {
@@ -503,8 +568,6 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       } else {
         setError(message);
       }
-    } finally {
-      setLoading(false);
     }
   }, [executePluginAction]);
 
@@ -535,13 +598,13 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
       )}
       <div className="sounddrop-scroll overflow-y-auto pr-2 pb-4" style={{ maxHeight: '23.8rem' }}>
         {!isEditing ? (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2" style={{ padding: '2px' }}>
             {sounds.map((sound) => (
               <button
                 key={sound.id}
                 disabled={!currentVoiceChannelId || loading}
                 onClick={() => onPlay(sound.id)}
-                className="rounded border px-2 py-1 text-sm disabled:opacity-50 flex items-center gap-1.5 justify-center"
+                className={`sounddrop-cell rounded px-2 py-1 text-sm disabled:opacity-50 flex items-center gap-1.5 justify-center${playingSoundIds.has(sound.id) ? ' sounddrop-playing' : ''}`}
               >
                 <EmojiDisplay value={sound.emoji} className="h-5 w-5 shrink-0" />
                 <span className="truncate">{sound.name}</span>
@@ -552,7 +615,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
           sounds.length === 0 ? (
             <p className="text-sm opacity-60">No sounds yet.</p>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2" style={{ padding: '2px' }}>
               {sounds.map((sound) => (
                 <EditableCard
                   key={sound.id}
