@@ -396,7 +396,7 @@ const EditableCard = ({
 
 // ---------------------------------------------------------------------------
 
-const SoundboardPanel = ({ isEditing, onToggleEditing, isAddingSound, onToggleAddingSound, onAddSoundDone }: { isEditing: boolean; onToggleEditing: () => void; isAddingSound: boolean; onToggleAddingSound: () => void; onAddSoundDone: () => void }) => {
+const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditing: boolean; isAddingSound: boolean; onAddSoundDone: () => void }) => {
   const { state, actions } = useSharkordStore();
   const { currentVoiceChannelId, emojis: customEmojis = [] } = state;
   const { executePluginAction } = actions;
@@ -407,8 +407,6 @@ const SoundboardPanel = ({ isEditing, onToggleEditing, isAddingSound, onToggleAd
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [soundPage, setSoundPage] = useState(0);
-  const [editPage, setEditPage] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Pre-warm the RTP consumer whenever the panel is mounted in a voice channel,
@@ -465,9 +463,6 @@ const SoundboardPanel = ({ isEditing, onToggleEditing, isAddingSound, onToggleAd
       });
 
       setSounds((prev) => [newSound, ...prev.filter((item) => item.id !== newSound.id)]);
-      // New sound lands on page 1, so reset both views to page 0.
-      setSoundPage(0);
-      setEditPage(0);
       setFile(null);
       setName('');
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -517,54 +512,15 @@ const SoundboardPanel = ({ isEditing, onToggleEditing, isAddingSound, onToggleAd
     }
   }, [executePluginAction]);
 
-  // Clamp pages to valid range (handles deletions that shrink the list).
-  const soundPageCount = Math.ceil(sounds.length / SOUNDS_PER_PAGE);
-  const clampedSoundPage = Math.min(soundPage, Math.max(0, soundPageCount - 1));
-  const visibleSounds = sounds.slice(clampedSoundPage * SOUNDS_PER_PAGE, (clampedSoundPage + 1) * SOUNDS_PER_PAGE);
-
-  const editPageCount = Math.ceil(sounds.length / SOUNDS_PER_PAGE);
-  const clampedEditPage = Math.min(editPage, Math.max(0, editPageCount - 1));
-  const visibleEditSounds = sounds.slice(clampedEditPage * SOUNDS_PER_PAGE, (clampedEditPage + 1) * SOUNDS_PER_PAGE);
-
   return (
-    <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
-      <div className="flex items-center gap-2">
-        {(isEditing || !currentVoiceChannelId) && (
-          <p className="text-sm opacity-70 flex-1">
-            {isEditing
-              ? 'Edit names and emojis. Tap the trash icon twice to delete.'
-              : 'Join a voice call to play sounds.'}
-          </p>
-        )}
-        <div className="flex items-center gap-1 shrink-0 ml-auto">
-          <button
-            type="button"
-            onClick={onToggleEditing}
-            title={isEditing ? 'Done editing' : 'Edit sounds'}
-            aria-pressed={isEditing}
-            className={`rounded px-1.5 py-1 hover:bg-accent ${isEditing ? 'bg-accent text-foreground' : 'text-foreground/70'}`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={onToggleAddingSound}
-            title={isAddingSound ? 'Cancel adding sound' : 'Add sound'}
-            aria-pressed={isAddingSound}
-            className={`rounded px-1.5 py-1 hover:bg-accent ${isAddingSound ? 'bg-accent text-foreground' : 'text-foreground/70'}`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M12 4v16M4 12h16" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      {!isEditing ? (
-        <>
+    <div className="w-full h-full p-4 flex flex-col gap-3">
+      {isEditing && (
+        <p className="text-sm opacity-70 shrink-0">Edit names and emojis. Tap the trash icon twice to delete.</p>
+      )}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {!isEditing ? (
           <div className="grid grid-cols-2 gap-2">
-            {visibleSounds.map((sound) => (
+            {sounds.map((sound) => (
               <button
                 key={sound.id}
                 disabled={!currentVoiceChannelId || loading}
@@ -576,34 +532,28 @@ const SoundboardPanel = ({ isEditing, onToggleEditing, isAddingSound, onToggleAd
               </button>
             ))}
           </div>
-          <PageButtons page={clampedSoundPage} pageCount={soundPageCount} onPage={setSoundPage} />
-        </>
-      ) : (
-        <>
-          {sounds.length === 0 ? (
+        ) : (
+          sounds.length === 0 ? (
             <p className="text-sm opacity-60">No sounds yet.</p>
           ) : (
-            <>
-              <div className="grid grid-cols-2 gap-2">
-                {visibleEditSounds.map((sound) => (
-                  <EditableCard
-                    key={sound.id}
-                    sound={sound}
-                    customEmojis={customEmojis}
-                    disabled={loading}
-                    onDelete={() => onDelete(sound.id)}
-                    onUpdate={(n, e) => onUpdate(sound.id, n, e)}
-                  />
-                ))}
-              </div>
-              <PageButtons page={clampedEditPage} pageCount={editPageCount} onPage={setEditPage} />
-            </>
-          )}
-        </>
-      )}
+            <div className="grid grid-cols-2 gap-2">
+              {sounds.map((sound) => (
+                <EditableCard
+                  key={sound.id}
+                  sound={sound}
+                  customEmojis={customEmojis}
+                  disabled={loading}
+                  onDelete={() => onDelete(sound.id)}
+                  onUpdate={(n, e) => onUpdate(sound.id, n, e)}
+                />
+              ))}
+            </div>
+          )
+        )}
+      </div>
 
       {isAddingSound ? (
-        <div className="border rounded-md p-2 flex flex-col gap-2">
+        <div className="border rounded-md p-2 flex flex-col gap-2 shrink-0">
           <div className="flex gap-2 items-center">
             <input
               value={name}
