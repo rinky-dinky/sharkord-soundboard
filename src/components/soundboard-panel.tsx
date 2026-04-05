@@ -513,7 +513,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditi
   }, [executePluginAction]);
 
   return (
-    <div className="w-full h-full p-4 flex flex-col gap-3">
+    <div className="flex-1 min-h-0 p-4 flex flex-col gap-3 overflow-hidden">
       {isEditing && (
         <p className="text-sm opacity-70 shrink-0">Edit names and emojis. Tap the trash icon twice to delete.</p>
       )}
