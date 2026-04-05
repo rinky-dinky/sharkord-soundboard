@@ -7,6 +7,7 @@ const SoundboardLauncher = () => {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isAddingSound, setIsAddingSound] = useState(false);
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({});
   const containerRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -18,6 +19,7 @@ const SoundboardLauncher = () => {
   const handleClose = useCallback(() => {
     setOpen(false);
     setIsEditing(false);
+    setIsAddingSound(false);
   }, []);
 
   const updatePanelPosition = useCallback(() => {
@@ -99,7 +101,7 @@ const SoundboardLauncher = () => {
               role="dialog"
               aria-label="SoundDrop"
               style={panelStyle}
-              className="h-[28rem] rounded-lg border bg-background shadow-2xl"
+              className="h-[28rem] overflow-hidden flex flex-col rounded-lg border bg-background shadow-2xl"
             >
               <div className="flex items-center justify-between border-b px-3 py-2">
                 <p className="text-sm font-medium">SoundDrop</p>
@@ -112,23 +114,29 @@ const SoundboardLauncher = () => {
                     className={`rounded px-1.5 py-1 hover:bg-accent ${isEditing ? 'bg-accent text-foreground' : 'text-foreground/70'}`}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </button>
                   <button
                     type="button"
-                    onClick={handleClose}
-                    title="Close SoundDrop"
-                    className="rounded px-2 py-1 hover:bg-accent"
+                    onClick={() => setIsAddingSound((v) => !v)}
+                    title={isAddingSound ? 'Cancel adding sound' : 'Add sound'}
+                    aria-pressed={isAddingSound}
+                    className={`rounded px-1.5 py-1 hover:bg-accent ${isAddingSound ? 'bg-accent text-foreground' : 'text-foreground/70'}`}
                   >
-                    ✕
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M12 4v16M4 12h16" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                    </svg>
                   </button>
                 </div>
               </div>
 
-              <div className="h-[calc(100%-45px)]">
-                <SoundboardPanel isEditing={isEditing} />
+              <div>
+                <SoundboardPanel
+                  isEditing={isEditing}
+                  isAddingSound={isAddingSound}
+                  onAddSoundDone={() => setIsAddingSound(false)}
+                />
               </div>
             </div>,
             document.body

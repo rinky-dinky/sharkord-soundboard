@@ -396,7 +396,7 @@ const EditableCard = ({
 
 // ---------------------------------------------------------------------------
 
-const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
+const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone }: { isEditing: boolean; isAddingSound: boolean; onAddSoundDone: () => void }) => {
   const { state, actions } = useSharkordStore();
   const { currentVoiceChannelId, emojis: customEmojis = [] } = state;
   const { executePluginAction } = actions;
@@ -407,9 +407,23 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [soundPage, setSoundPage] = useState(0);
-  const [editPage, setEditPage] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const id = 'sounddrop-scrollbar-style';
+    const existing = document.getElementById(id);
+    const style = existing ?? document.createElement('style');
+    style.id = id;
+    style.textContent = `
+      .sounddrop-scroll { scrollbar-width: thin; scrollbar-color: rgba(128,128,128,0.5) transparent; }
+      .sounddrop-scroll::-webkit-scrollbar { width: 2px; }
+      .sounddrop-scroll::-webkit-scrollbar-track { background: transparent; box-shadow: none; border: none; }
+      .sounddrop-scroll::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.5); border-radius: 0; border: none; box-shadow: none; }
+      .sounddrop-scroll::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
+      .sounddrop-scroll::-webkit-scrollbar-corner { background: transparent; }
+    `;
+    if (!existing) document.head.appendChild(style);
+  }, []);
 
   // Pre-warm the RTP consumer whenever the panel is mounted in a voice channel,
   // or when the user switches channels. This hides the consumer-connection delay
@@ -439,6 +453,15 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
     syncSounds().catch(() => {});
   }, [syncSounds]);
 
+  useEffect(() => {
+    if (!isAddingSound) {
+      setName('');
+      setEmoji('🦈');
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [isAddingSound]);
+
   const onUpload = useCallback(async () => {
     if (!file) { setError('Select an audio file first.'); return; }
     setLoading(true);
@@ -456,18 +479,16 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
       });
 
       setSounds((prev) => [newSound, ...prev.filter((item) => item.id !== newSound.id)]);
-      // New sound lands on page 1, so reset both views to page 0.
-      setSoundPage(0);
-      setEditPage(0);
       setFile(null);
       setName('');
       if (fileInputRef.current) fileInputRef.current.value = '';
+      onAddSoundDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [emoji, executePluginAction, file, name]);
+  }, [emoji, executePluginAction, file, name, onAddSoundDone]);
 
   const onPlay = useCallback(async (soundId: string) => {
     setLoading(true);
@@ -507,26 +528,15 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
     }
   }, [executePluginAction]);
 
-  // Clamp pages to valid range (handles deletions that shrink the list).
-  const soundPageCount = Math.ceil(sounds.length / SOUNDS_PER_PAGE);
-  const clampedSoundPage = Math.min(soundPage, Math.max(0, soundPageCount - 1));
-  const visibleSounds = sounds.slice(clampedSoundPage * SOUNDS_PER_PAGE, (clampedSoundPage + 1) * SOUNDS_PER_PAGE);
-
-  const editPageCount = Math.ceil(sounds.length / SOUNDS_PER_PAGE);
-  const clampedEditPage = Math.min(editPage, Math.max(0, editPageCount - 1));
-  const visibleEditSounds = sounds.slice(clampedEditPage * SOUNDS_PER_PAGE, (clampedEditPage + 1) * SOUNDS_PER_PAGE);
-
   return (
-    <div className="w-full h-full p-4 flex flex-col gap-3 overflow-auto">
-      {!isEditing ? (
-        <>
-          <p className="text-sm opacity-70">
-            {currentVoiceChannelId
-              ? 'Click a sound to play it in your active voice call.'
-              : 'Join a voice call to play sounds.'}
-          </p>
+    <div className="p-4 flex flex-col gap-3">
+      {isEditing && (
+        <p className="text-sm opacity-70 shrink-0">Edit names and emojis. Tap the trash icon twice to delete.</p>
+      )}
+      <div className="sounddrop-scroll overflow-y-auto pr-2 pb-4" style={{ maxHeight: '23.8rem' }}>
+        {!isEditing ? (
           <div className="grid grid-cols-2 gap-2">
-            {visibleSounds.map((sound) => (
+            {sounds.map((sound) => (
               <button
                 key={sound.id}
                 disabled={!currentVoiceChannelId || loading}
@@ -538,36 +548,28 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
               </button>
             ))}
           </div>
-          <PageButtons page={clampedSoundPage} pageCount={soundPageCount} onPage={setSoundPage} />
-        </>
-      ) : (
-        <>
-          <p className="text-sm opacity-70">Edit names and emojis. Tap the trash icon twice to delete.</p>
-          {sounds.length === 0 ? (
+        ) : (
+          sounds.length === 0 ? (
             <p className="text-sm opacity-60">No sounds yet.</p>
           ) : (
-            <>
-              <div className="grid grid-cols-2 gap-2">
-                {visibleEditSounds.map((sound) => (
-                  <EditableCard
-                    key={sound.id}
-                    sound={sound}
-                    customEmojis={customEmojis}
-                    disabled={loading}
-                    onDelete={() => onDelete(sound.id)}
-                    onUpdate={(n, e) => onUpdate(sound.id, n, e)}
-                  />
-                ))}
-              </div>
-              <PageButtons page={clampedEditPage} pageCount={editPageCount} onPage={setEditPage} />
-            </>
-          )}
-        </>
-      )}
+            <div className="grid grid-cols-2 gap-2">
+              {sounds.map((sound) => (
+                <EditableCard
+                  key={sound.id}
+                  sound={sound}
+                  customEmojis={customEmojis}
+                  disabled={loading}
+                  onDelete={() => onDelete(sound.id)}
+                  onUpdate={(n, e) => onUpdate(sound.id, n, e)}
+                />
+              ))}
+            </div>
+          )
+        )}
+      </div>
 
-      <details className="border rounded-md p-2" open={false}>
-        <summary className="cursor-pointer select-none font-medium">Add Sound</summary>
-        <div className="mt-2 flex flex-col gap-2">
+      {isAddingSound ? (
+        <div className="border rounded-md p-2 flex flex-col gap-2 shrink-0">
           <div className="flex gap-2 items-center">
             <input
               value={name}
@@ -603,7 +605,7 @@ const SoundboardPanel = ({ isEditing }: { isEditing: boolean }) => {
             Add
           </button>
         </div>
-      </details>
+      ) : null}
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
     </div>
