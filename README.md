@@ -22,14 +22,13 @@ Manual installation:
 
 ## To add a sound to the soundboard
 
-1. Join a voice channel.
-2. Click the soundboard launcher button in the top-right bar to open the floating panel.
-3. Click **Add Sound**.
-4. Enter:
+1. Click the soundboard launcher button in the top-right bar.
+2. Click **Add Sound**.
+3. Enter:
    - **Sound name**
    - **Emoji**
    - **Audio file**
-5. Click **Add**.
+4. Click **Add**.
 
 ## Playing sounds
 
