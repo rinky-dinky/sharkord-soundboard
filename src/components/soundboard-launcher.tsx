@@ -101,7 +101,7 @@ const SoundboardLauncher = () => {
               role="dialog"
               aria-label="SoundDrop"
               style={panelStyle}
-              className="h-[28rem] rounded-lg border bg-background shadow-2xl"
+              className="h-[28rem] overflow-hidden flex flex-col rounded-lg border bg-background shadow-2xl"
             >
               <div className="flex items-center justify-between border-b px-3 py-2">
                 <p className="text-sm font-medium">SoundDrop</p>
@@ -131,7 +131,7 @@ const SoundboardLauncher = () => {
                 </div>
               </div>
 
-              <div className="h-[calc(100%-45px)]">
+              <div className="flex-1 min-h-0">
                 <SoundboardPanel
                   isEditing={isEditing}
                   isAddingSound={isAddingSound}
