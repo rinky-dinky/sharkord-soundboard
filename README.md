@@ -17,37 +17,37 @@ Automatic installation:
 
 Manual installation:
 
-1. Download the latest `sharkord-soundboard-0.0.4.tar.gz` from the [Releases](https://github.com/rinky-dinky/sharkord-soundboard/releases) page.
+1. Download the latest `sharkord-soundboard-0.0.5.tar.gz` from the [Releases](https://github.com/rinky-dinky/sharkord-soundboard/releases) page.
 2. Extract it into your Sharkord plugins folder.
 
-## To add a sound to the soundboard
+## Add a sound to the soundboard
 
 1. Click the soundboard launcher button in the top-right bar.
-2. Click **Add Sound**.
+2. Click the **+** button.
 3. Enter:
    - **Sound name**
    - **Emoji**
    - **Audio file**
 4. Click **Add**.
 
-## Playing sounds
+## Play sounds
 
 1. Join a voice channel.
 2. Click the soundboard launcher button in the top-right bar.
 3. Click any sound button to play it in your active call.
 
-## Stopping sounds
+## Stop sounds
 
-Use the `/stop_sounds` command to immediately stop all currently playing sounds.
+While a sound is playing, click the red **X** button in the UI.
+
+Or use the `/stop_sounds` command.
 
 ## Screenshots
 
-<img align="center" width="370" height="574" alt="image" src="https://i.imgur.com/IPnNPGz.jpeg" /> <img align="center" width="370" height="574" alt="image" src="https://i.imgur.com/yVj0ewK.jpeg" /> 
+<img align="center" width="377" height="447" alt="image" src="https://github.com/user-attachments/assets/e818d187-4ccb-4bb1-b047-b3cae8496474" />
 
 
 
 ## ⚠️ Note ⚠️
 
 This is just a vibe-coded project, use at your own risk.
-
-Thank you [Diogo Martino](https://github.com/diogomartino) for the awesome project that is [Sharkord](https://github.com/Sharkord/sharkord)
