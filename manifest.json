@@ -1,7 +1,7 @@
 {
   "id": "sharkord-soundboard",
   "name": "SoundDrop",
-  "version": "0.0.5",
+  "version": "0.0.4",
   "sdkVersion": 1,
   "author": "rinky-dinky",
   "description": "Adds a soundboard to voice channels.",
