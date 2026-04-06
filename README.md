@@ -4,9 +4,9 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard
 
 ## Features
 
-- Soundboard button in the top-right plugin slot.
-- Click-to-play sounds in the user's currently active voice channel.
-- Upload audio files directly from the soundboard panel.
+- Click-to-play sounds in your active voice channel.
+- Upload and trim audio files directly from the soundboard.
+- Edit volume per sound.
 - Sounds are stored locally in the plugin directory and shared with all users.
 
 ## Install
@@ -38,6 +38,7 @@ Manual installation:
 3. Edit the name/emoji/volume/audio and click save.
 
 To delete a sound, double-click the trashcan icon.
+To re-arrange the grid, simply drag and drop.
 
 ## Play sounds
 
