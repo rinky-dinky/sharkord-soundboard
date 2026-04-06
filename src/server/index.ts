@@ -4,7 +4,7 @@ import { access, chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promi
 import { join } from 'node:path';
 import { inflateRaw } from 'node:zlib';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
-import type { TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from '../types';
+import type { TGetSoundDataResponse, TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from '../types';
 
 const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 10;
 const RTP_AUDIO_PAYLOAD_TYPE = 111;
@@ -129,7 +129,8 @@ const loadSounds = async (pluginPath: string): Promise<TSoundEntry[]> => {
         typeof entry.mimeType === 'string' &&
         typeof entry.localPath === 'string' &&
         typeof entry.createdByUserId === 'number' &&
-        typeof entry.createdAt === 'number'
+        typeof entry.createdAt === 'number' &&
+        (entry.volume === undefined || typeof entry.volume === 'number')
     );
   } catch {
     return [];
@@ -609,7 +610,8 @@ const onLoad = async (ctx: PluginContext) => {
         mimeType,
         localPath,
         createdByUserId: invokerCtx.userId,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        ...(payload.volume !== undefined && payload.volume !== 1.0 ? { volume: payload.volume } : {}),
       };
 
       sounds.push(newEntry);
@@ -640,7 +642,14 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'update_sound',
-    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string; name: string; emoji: string }) {
+    async execute(_invokerCtx: TInvokerContext, payload: {
+      soundId: string;
+      name: string;
+      emoji: string;
+      volume?: number;
+      fileData?: string;
+      mimeType?: string;
+    }) {
       const name = payload.name.trim();
       const emoji = payload.emoji.trim();
       if (!name) throw new Error('Sound name is required.');
@@ -650,11 +659,47 @@ const onLoad = async (ctx: PluginContext) => {
       const idx = sounds.findIndex((entry) => entry.id === payload.soundId);
       if (idx === -1) throw new Error('Sound not found.');
 
-      sounds[idx] = { ...sounds[idx], name, emoji };
+      const update: Partial<TSoundEntry> = { name, emoji };
+      if (payload.volume !== undefined) update.volume = payload.volume;
+      else update.volume = undefined; // allow clearing volume back to default
+
+      // Optionally replace the audio file (e.g. after client-side trim)
+      if (payload.fileData && payload.mimeType) {
+        const fileBuffer = Buffer.from(payload.fileData, 'base64');
+        if (fileBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
+          throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
+        }
+        const newExt = getExtFromMimeType(payload.mimeType);
+        const newLocalPath = join(getSoundsDir(ctx.path), `${payload.soundId}.${newExt}`);
+        // Remove the old file if its path would differ (extension changed)
+        if (sounds[idx].localPath !== newLocalPath) {
+          try { await unlink(sounds[idx].localPath); } catch { /* already gone */ }
+        }
+        await writeFile(newLocalPath, fileBuffer);
+        update.localPath = newLocalPath;
+        update.mimeType = payload.mimeType;
+      }
+
+      sounds[idx] = { ...sounds[idx], ...update };
       await saveSounds(ctx.path, sounds);
 
       const { localPath: _localPath, ...updated } = sounds[idx];
       return updated;
+    }
+  });
+
+  ctx.actions.register({
+    name: 'get_sound_data',
+    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string }) {
+      const sounds = await loadSounds(ctx.path);
+      const sound = sounds.find((entry) => entry.id === payload.soundId);
+      if (!sound) throw new Error('Sound not found.');
+      const fileBuffer = await readFile(sound.localPath);
+      const response: TGetSoundDataResponse = {
+        fileData: fileBuffer.toString('base64'),
+        mimeType: sound.mimeType,
+      };
+      return response;
     }
   });
 
@@ -803,10 +848,14 @@ const onLoad = async (ctx: PluginContext) => {
         if (!activePlaybacks.has(playbackId)) return { ok: true };
       }
 
+      const volumeGain = sound.volume ?? 1.0;
+      const volumeArgs = volumeGain !== 1.0 ? ['-af', `volume=${volumeGain}`] : [];
+
       const ffmpeg = spawn(ffmpegBinaryPath, [
         '-re',
         '-i', sound.localPath,
         '-vn',
+        ...volumeArgs,
         '-ac', '2',
         '-ar', '48000',
         '-c:a', 'libopus',

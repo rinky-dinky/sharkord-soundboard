@@ -7,6 +7,7 @@ export type TSoundEntry = {
   localPath: string;
   createdByUserId: number;
   createdAt: number;
+  volume?: number; // 0.0–1.0; absent/undefined means 1.0 (full volume)
 };
 
 // Subset sent to clients (no localPath)
@@ -22,4 +23,10 @@ export type TUploadSoundPayload = {
   fileData: string; // base64-encoded audio file contents
   mimeType: string;
   id?: string;
+  volume?: number; // 0.0–1.0; absent means 1.0
+};
+
+export type TGetSoundDataResponse = {
+  fileData: string; // base64-encoded audio file contents
+  mimeType: string;
 };
