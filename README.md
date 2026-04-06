@@ -38,6 +38,7 @@ Manual installation:
 3. Edit the name/emoji/volume/audio and click save.
 
 To delete a sound, double-click the trashcan icon.
+
 To re-arrange the grid, simply drag and drop.
 
 ## Play sounds
