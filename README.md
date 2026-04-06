@@ -6,7 +6,7 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard
 
 - Click-to-play sounds in your active voice channel.
 - Upload and trim audio files directly from the soundboard.
-- Edit volume per sound.
+- Adjustable volume controls.
 - Sounds are stored locally in the plugin directory and shared with all users.
 
 ## Install
