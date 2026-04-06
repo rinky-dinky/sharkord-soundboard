@@ -402,7 +402,7 @@ const EmojiPicker = ({
     <div
       ref={dropdownRef}
       style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: 296, zIndex: 2147483647 }}
-      className="rounded border bg-background shadow-md"
+      className="sounddrop-picker-dropdown rounded border bg-background shadow-md"
       data-emoji-picker-dropdown
     >
       {/* Search bar */}
@@ -413,7 +413,7 @@ const EmojiPicker = ({
           value={searchQuery}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
           placeholder="Search emoji…"
-          className="w-full rounded border bg-transparent px-2 py-1 text-xs outline-none focus:border-accent"
+          className="sounddrop-picker-search w-full rounded border bg-transparent px-2 py-1 text-xs"
         />
       </div>
 
@@ -531,7 +531,7 @@ const EmojiPicker = ({
         onClick={handleToggle}
         aria-expanded={open}
         aria-label="Pick emoji"
-        className="inline-flex h-8 w-8 items-center justify-center rounded border hover:bg-accent"
+        className="sounddrop-emoji-trigger inline-flex h-8 w-8 items-center justify-center rounded border"
       >
         <EmojiDisplay value={value} className="h-5 w-5" />
       </button>
@@ -1229,7 +1229,7 @@ const SoundManagePanel = ({
   };
 
   return (
-    <div className="border rounded-md p-2 flex flex-col gap-2 shrink-0">
+    <div className="sounddrop-module border rounded-md p-2 flex flex-col gap-2 shrink-0">
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium opacity-60 flex-1">Manage sound</span>
         <button
@@ -1253,7 +1253,7 @@ const SoundManagePanel = ({
           value={name}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
           placeholder="Sound name"
-          className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1"
+          className="sounddrop-input min-w-0 flex-1 rounded border px-2 py-1"
         />
         <EmojiPicker value={emoji} customEmojis={customEmojis} onChange={setEmoji} />
       </div>
@@ -1285,7 +1285,7 @@ const SoundManagePanel = ({
         type="button"
         disabled={!name.trim() || saving}
         onClick={() => onSave().catch(() => {})}
-        className="rounded border px-2 py-1 disabled:opacity-50"
+        className="sounddrop-action-btn rounded border px-2 py-1 disabled:opacity-50"
       >
         {saving ? 'Saving…' : 'Save'}
       </button>
@@ -1356,6 +1356,45 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
       .sounddrop-selected {
         border-color: rgba(96,165,250,0.7) !important;
         background: rgba(96,165,250,0.15) !important;
+      }
+      .sounddrop-module {
+        background: rgba(128,128,128,0.18) !important;
+        border-color: rgba(128,128,128,0.28) !important;
+      }
+      .sounddrop-action-btn {
+        background: rgba(128,128,128,0.18) !important;
+        border-color: rgba(128,128,128,0.28) !important;
+        transition: background 200ms ease;
+      }
+      .sounddrop-action-btn:not([disabled]):hover {
+        background: rgba(128,128,128,0.32) !important;
+      }
+      .sounddrop-input {
+        background: rgba(128,128,128,0.12) !important;
+        border-color: rgba(128,128,128,0.28) !important;
+      }
+      .sounddrop-input:focus {
+        border-color: rgba(128,128,128,0.55) !important;
+        outline: none !important;
+      }
+      .sounddrop-emoji-trigger {
+        background: rgba(128,128,128,0.18) !important;
+        border-color: rgba(128,128,128,0.28) !important;
+        transition: background 200ms ease;
+      }
+      .sounddrop-emoji-trigger:hover {
+        background: rgba(128,128,128,0.32) !important;
+      }
+      .sounddrop-picker-dropdown {
+        border-color: rgba(128,128,128,0.28) !important;
+      }
+      .sounddrop-picker-dropdown .sounddrop-picker-search {
+        background: rgba(128,128,128,0.12) !important;
+        border-color: rgba(128,128,128,0.28) !important;
+        outline: none !important;
+      }
+      .sounddrop-picker-dropdown .sounddrop-picker-search:focus {
+        border-color: rgba(128,128,128,0.55) !important;
       }
     `;
     if (!existing) document.head.appendChild(style);
@@ -1604,13 +1643,13 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
       ) : null}
 
       {isAddingSound ? (
-        <div className="border rounded-md p-2 flex flex-col gap-2 shrink-0">
+        <div className="sounddrop-module border rounded-md p-2 flex flex-col gap-2 shrink-0">
           <div className="flex gap-2 items-center">
             <input
               value={name}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
               placeholder="Sound name"
-              className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1"
+              className="sounddrop-input min-w-0 flex-1 rounded border px-2 py-1"
             />
             <EmojiPicker value={emoji} customEmojis={customEmojis} onChange={setEmoji} />
           </div>
@@ -1633,7 +1672,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="rounded border px-2 py-1 text-sm hover:bg-accent truncate"
+            className="sounddrop-action-btn rounded border px-2 py-1 text-sm truncate"
           >
             {file ? file.name : 'Upload file'}
           </button>
@@ -1661,7 +1700,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
             type="button"
             disabled={!file || !name || !emoji || loading}
             onClick={onUpload}
-            className="rounded border px-2 py-1 disabled:opacity-50"
+            className="sounddrop-action-btn rounded border px-2 py-1 disabled:opacity-50"
           >
             Add
           </button>
