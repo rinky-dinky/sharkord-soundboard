@@ -607,7 +607,6 @@ const AudioTrimmer = ({
   // Clicking or dragging on the waveform seeks to that position.
   // While dragging the playhead moves visually; audio restarts on mouse-up.
   const handleWaveformMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isPlayingRef.current && !decodedBufferRef.current) return;
     const buf = decodedBufferRef.current;
     if (!buf) return;
 
@@ -630,17 +629,15 @@ const AudioTrimmer = ({
       }
     };
 
-    // On mouse-up: restart audio from the final scrub position.
+    // On mouse-up: start/restart audio from the final scrub position.
     const onMouseUp = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
-      if (isPlayingRef.current) {
-        startPlaybackFrom(getTime(ev.clientX));
-      }
+      startPlaybackFrom(getTime(ev.clientX));
     };
 
-    // Seek immediately on click too.
-    if (isPlayingRef.current) startPlaybackFrom(getTime(e.clientX));
+    // Start playing immediately from the click position.
+    startPlaybackFrom(getTime(e.clientX));
 
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
