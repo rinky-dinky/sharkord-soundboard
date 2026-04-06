@@ -122,7 +122,8 @@ const trimAudioWithFfmpeg = (
   trimEnd: number,
 ): Promise<void> =>
   new Promise((resolve, reject) => {
-    const tmpPath = `${filePath}.trimming.tmp`;
+    const ext = filePath.slice(filePath.lastIndexOf('.'));
+    const tmpPath = `${filePath}.trimming${ext}`;
     const proc = spawn(ffmpegPath, [
       '-y',
       '-i', filePath,
