@@ -656,7 +656,7 @@ const AudioTrimmer = ({
             disabled={decoding || !decodedBufferRef.current}
             onClick={isPlaying ? stopPreview : playPreview}
             title={isPlaying ? 'Stop preview' : 'Preview trimmed audio'}
-            className="flex items-center gap-1 rounded border px-2 py-0.5 hover:bg-accent disabled:opacity-40"
+            className="flex items-center justify-center rounded border w-7 h-6 hover:bg-accent disabled:opacity-40"
           >
             {isPlaying ? (
               // Stop square
@@ -669,7 +669,6 @@ const AudioTrimmer = ({
                 <polygon points="2,1 9,5 2,9" />
               </svg>
             )}
-            <span>{isPlaying ? 'Stop' : 'Preview'}</span>
           </button>
         </div>
         <span className="opacity-60 shrink-0">End</span>
@@ -714,96 +713,208 @@ const useSharkordStore = () => {
   return { state, actions: store.actions };
 };
 
-// Inline edit card shown in the edit grid.
-const EditableCard = ({
+// ---------------------------------------------------------------------------
+// SoundManagePanel: edit name/emoji/volume/trim for an existing sound
+// ---------------------------------------------------------------------------
+
+const SoundManagePanel = ({
   sound,
   customEmojis,
-  disabled,
-  onDelete,
-  onUpdate
+  executePluginAction,
+  onSaved,
+  onDeleted,
 }: {
   sound: TSoundInfo;
   customEmojis: TPluginEmoji[];
-  disabled: boolean;
-  onDelete: () => Promise<void>;
-  onUpdate: (name: string, emoji: string) => Promise<void>;
+  executePluginAction: <T>(action: string, payload?: unknown) => Promise<T>;
+  onSaved: (updated: TSoundInfo) => void;
+  onDeleted: () => void;
 }) => {
-  const [localName, setLocalName] = useState(sound.name);
-  const [localEmoji, setLocalEmoji] = useState(sound.emoji);
+  const [name, setName] = useState(sound.name);
+  const [emoji, setEmoji] = useState(sound.emoji);
+  const [volume, setVolume] = useState(Math.round((sound.volume ?? 1) * 100));
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [loadingAudio, setLoadingAudio] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioBufferRef = useRef<AudioBuffer | null>(null);
 
+  // Sync fields when the selected sound changes
   useEffect(() => {
-    setLocalName(sound.name);
-    setLocalEmoji(sound.emoji);
-  }, [sound.name, sound.emoji]);
+    setName(sound.name);
+    setEmoji(sound.emoji);
+    setVolume(Math.round((sound.volume ?? 1) * 100));
+    setAudioFile(null);
+    setLoadingAudio(true);
+    setLoadError(null);
+    setTrimStart(0);
+    setTrimEnd(0);
+    setAudioDuration(0);
+    setSaveError(null);
+    audioBufferRef.current = null;
+  }, [sound.id]);
 
+  // Fetch the audio from the server so we can render the waveform
   useEffect(() => {
-    return () => {
-      if (deleteTimerRef.current !== null) clearTimeout(deleteTimerRef.current);
-    };
+    let cancelled = false;
+    setLoadingAudio(true);
+    setLoadError(null);
+
+    executePluginAction<{ fileData: string; mimeType: string }>('get_sound_data', { soundId: sound.id })
+      .then(({ fileData, mimeType }) => {
+        if (cancelled) return;
+        // Decode base64 → Blob → File so AudioTrimmer can consume it
+        const binary = atob(fileData);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: mimeType });
+        const ext = mimeType.split('/')[1] ?? 'mp3';
+        const file = new File([blob], `sound.${ext}`, { type: mimeType });
+        setAudioFile(file);
+        setLoadingAudio(false);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setLoadError(e instanceof Error ? e.message : String(e));
+          setLoadingAudio(false);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [sound.id]);
+
+  useEffect(() => () => {
+    if (deleteTimerRef.current !== null) clearTimeout(deleteTimerRef.current);
   }, []);
 
-  const handleNameBlur = () => {
-    const trimmed = localName.trim();
-    if (!trimmed) { setLocalName(sound.name); return; }
-    if (trimmed !== sound.name || localEmoji !== sound.emoji) {
-      onUpdate(trimmed, localEmoji).catch(() => {
-        setLocalName(sound.name);
-        setLocalEmoji(sound.emoji);
+  const onSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const buffer = audioBufferRef.current;
+      const needsTrim = buffer !== null && audioDuration > 0 &&
+        (trimStart > 0.01 || trimEnd < audioDuration - 0.01);
+
+      let fileData: string | undefined;
+      let mimeType: string | undefined;
+
+      if (needsTrim && buffer) {
+        const trimDuration = trimEnd - trimStart;
+        const offlineCtx = new OfflineAudioContext(
+          Math.min(buffer.numberOfChannels, 2),
+          Math.ceil(buffer.sampleRate * trimDuration),
+          buffer.sampleRate
+        );
+        const source = offlineCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(offlineCtx.destination);
+        source.start(0, trimStart, trimDuration);
+        const rendered = await offlineCtx.startRendering();
+        const wavBuffer = encodeWAV(rendered);
+        const bytes = new Uint8Array(wavBuffer);
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        fileData = btoa(binary);
+        mimeType = 'audio/wav';
+      }
+
+      const updated = await executePluginAction<TSoundInfo>('update_sound', {
+        soundId: sound.id,
+        name: name.trim() || sound.name,
+        emoji,
+        volume: volume !== 100 ? volume / 100 : undefined,
+        ...(fileData ? { fileData, mimeType } : {}),
       });
+      onSaved(updated);
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleEmojiChange = (emoji: string) => {
-    setLocalEmoji(emoji);
-    onUpdate(localName.trim() || sound.name, emoji).catch(() => setLocalEmoji(sound.emoji));
-  };
-
-  const handleDeleteClick = async () => {
+  const onDelete = async () => {
     if (!deleteArmed) {
       setDeleteArmed(true);
       deleteTimerRef.current = setTimeout(() => setDeleteArmed(false), 3000);
     } else {
       if (deleteTimerRef.current !== null) clearTimeout(deleteTimerRef.current);
       setDeleteArmed(false);
-      await onDelete();
+      await executePluginAction('delete_sound', { soundId: sound.id });
+      onDeleted();
     }
   };
 
   return (
-    <div className="sounddrop-cell flex flex-col gap-1 rounded p-1.5">
-      <div className="flex gap-1 items-center">
-        {/* Trash */}
+    <div className="border rounded-md p-2 flex flex-col gap-2 shrink-0">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium opacity-60 flex-1">Manage sound</span>
         <button
           type="button"
-          disabled={disabled}
-          onClick={() => handleDeleteClick().catch(() => {})}
+          disabled={saving}
+          onClick={() => onDelete().catch(() => {})}
           title={deleteArmed ? 'Click again to confirm deletion' : 'Delete sound'}
-          className={`shrink-0 flex h-7 w-7 items-center justify-center rounded border disabled:opacity-50 ${
+          className={`flex h-6 w-6 items-center justify-center rounded border disabled:opacity-50 ${
             deleteArmed ? 'border-red-500 text-red-500' : 'opacity-50 hover:opacity-100'
           }`}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <polyline points="3 6 5 6 21 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             <path d="M10 11v6M14 11v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
-
-        <EmojiPicker value={localEmoji} customEmojis={customEmojis} onChange={handleEmojiChange} />
-
-        <input
-          value={localName}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLocalName(e.target.value)}
-          onBlur={handleNameBlur}
-          onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-            if (e.key === 'Escape') { setLocalName(sound.name); e.currentTarget.blur(); }
-          }}
-          className="min-w-0 flex-1 rounded border bg-transparent px-1.5 py-0.5 text-sm"
-        />
       </div>
+      <div className="flex gap-2 items-center">
+        <input
+          value={name}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
+          placeholder="Sound name"
+          className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1"
+        />
+        <EmojiPicker value={emoji} customEmojis={customEmojis} onChange={setEmoji} />
+      </div>
+      {loadingAudio ? (
+        <div className="h-16 rounded flex items-center justify-center bg-black/10 text-xs opacity-50">
+          Loading audio…
+        </div>
+      ) : loadError ? (
+        <p className="text-xs text-red-500">{loadError}</p>
+      ) : audioFile ? (
+        <AudioTrimmer
+          file={audioFile}
+          trimStart={trimStart}
+          trimEnd={trimEnd}
+          volume={volume}
+          onTrimStartChange={setTrimStart}
+          onTrimEndChange={setTrimEnd}
+          onVolumeChange={setVolume}
+          onReady={(dur, buf) => {
+            setAudioDuration(dur);
+            audioBufferRef.current = buf;
+            setTrimStart(0);
+            setTrimEnd(dur);
+          }}
+        />
+      ) : null}
+      {saveError ? <p className="text-xs text-red-500">{saveError}</p> : null}
+      <button
+        type="button"
+        disabled={!name.trim() || saving}
+        onClick={() => onSave().catch(() => {})}
+        className="rounded border px-2 py-1 disabled:opacity-50"
+      >
+        {saving ? 'Saving…' : 'Save'}
+      </button>
     </div>
   );
 };
@@ -822,6 +933,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playingSoundIds, setPlayingSoundIds] = useState<Set<string>>(new Set());
+  const [selectedSoundId, setSelectedSoundId] = useState<string | null>(null);
   // Trim / volume state for the Add Sound form
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
@@ -855,6 +967,21 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
       .sounddrop-playing {
         animation: sounddrop-shimmer 1.4s ease-in-out infinite;
         border-color: rgba(239,68,68,0.45) !important;
+      }
+      @keyframes sounddrop-wiggle {
+        0%   { transform: rotate(-2deg) translate(-0.5px,  0.5px); }
+        25%  { transform: rotate( 2deg) translate( 0.5px, -0.5px); }
+        50%  { transform: rotate(-2deg) translate(-0.5px, -0.5px); }
+        75%  { transform: rotate( 2deg) translate( 0.5px,  0.5px); }
+        100% { transform: rotate(-2deg) translate(-0.5px,  0.5px); }
+      }
+      .sounddrop-wiggle {
+        animation: sounddrop-wiggle 0.38s ease-in-out infinite;
+        transform-origin: center center;
+      }
+      .sounddrop-selected {
+        border-color: rgba(96,165,250,0.7) !important;
+        background: rgba(96,165,250,0.15) !important;
       }
     `;
     if (!existing) document.head.appendChild(style);
@@ -915,6 +1042,10 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }, [isAddingSound]);
+
+  useEffect(() => {
+    if (!isEditing) setSelectedSoundId(null);
+  }, [isEditing]);
 
   const onUpload = useCallback(async () => {
     if (!file) { setError('Select an audio file first.'); return; }
@@ -1037,65 +1168,58 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
     }
   }, [executePluginAction]);
 
-  const onDelete = useCallback(async (soundId: string) => {
-    setError(null);
-    try {
-      await executePluginAction('delete_sound', { soundId });
-      setSounds((prev) => prev.filter((entry) => entry.id !== soundId));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [executePluginAction]);
-
-  const onUpdate = useCallback(async (soundId: string, name: string, emoji: string) => {
-    setError(null);
-    try {
-      const updated = await executePluginAction<TSoundInfo>('update_sound', { soundId, name, emoji });
-      setSounds((prev) => prev.map((s) => (s.id === soundId ? updated : s)));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [executePluginAction]);
+  const selectedSound = sounds.find((s) => s.id === selectedSoundId) ?? null;
 
   return (
     <div className="p-4 flex flex-col gap-3">
-      {isEditing && (
-        <p className="text-sm opacity-70 shrink-0">Edit names and emojis. Tap the trash icon twice to delete.</p>
-      )}
       <div className="sounddrop-scroll overflow-y-auto pr-2 pb-4" style={{ maxHeight: '23.8rem' }}>
-        {!isEditing ? (
+        {sounds.length === 0 && isEditing ? (
+          <p className="text-sm opacity-60">No sounds yet.</p>
+        ) : (
           <div className="grid grid-cols-2 gap-2" style={{ padding: '2px' }}>
-            {sounds.map((sound) => (
+            {sounds.map((sound, idx) => (
               <button
                 key={sound.id}
-                disabled={!currentVoiceChannelId || loading}
-                onClick={() => onPlay(sound.id)}
-                className={`sounddrop-cell rounded px-2 py-1 text-sm disabled:opacity-50 flex items-center gap-1.5 justify-center${playingSoundIds.has(sound.id) ? ' sounddrop-playing' : ''}`}
+                disabled={isEditing ? false : (!currentVoiceChannelId || loading)}
+                onClick={() => {
+                  if (isEditing) {
+                    setSelectedSoundId((prev) => prev === sound.id ? null : sound.id);
+                  } else {
+                    onPlay(sound.id);
+                  }
+                }}
+                className={[
+                  'sounddrop-cell rounded px-2 py-1 text-sm flex items-center gap-1.5 justify-center',
+                  !isEditing && (playingSoundIds.has(sound.id) ? ' sounddrop-playing' : ''),
+                  !isEditing && 'disabled:opacity-50',
+                  isEditing && 'sounddrop-wiggle',
+                  isEditing && sound.id === selectedSoundId && 'sounddrop-selected',
+                ].filter(Boolean).join(' ')}
+                style={isEditing ? { animationDelay: `${(idx % 7) * 0.055}s` } : undefined}
               >
                 <EmojiDisplay value={sound.emoji} className="h-5 w-5 shrink-0" />
                 <span className="truncate">{sound.name}</span>
               </button>
             ))}
           </div>
-        ) : (
-          sounds.length === 0 ? (
-            <p className="text-sm opacity-60">No sounds yet.</p>
-          ) : (
-            <div className="grid grid-cols-2 gap-2" style={{ padding: '2px' }}>
-              {sounds.map((sound) => (
-                <EditableCard
-                  key={sound.id}
-                  sound={sound}
-                  customEmojis={customEmojis}
-                  disabled={loading}
-                  onDelete={() => onDelete(sound.id)}
-                  onUpdate={(n, e) => onUpdate(sound.id, n, e)}
-                />
-              ))}
-            </div>
-          )
         )}
       </div>
+
+      {isEditing && selectedSound ? (
+        <SoundManagePanel
+          sound={selectedSound}
+          customEmojis={customEmojis}
+          executePluginAction={executePluginAction}
+          onSaved={(updated) => {
+            setSounds((prev) => prev.map((s) => s.id === updated.id ? updated : s));
+            setSelectedSoundId(null);
+          }}
+          onDeleted={() => {
+            setSounds((prev) => prev.filter((s) => s.id !== selectedSoundId));
+            setSelectedSoundId(null);
+          }}
+        />
+      ) : null}
 
       {isAddingSound ? (
         <div className="border rounded-md p-2 flex flex-col gap-2 shrink-0">

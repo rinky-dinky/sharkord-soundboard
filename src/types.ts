@@ -25,3 +25,8 @@ export type TUploadSoundPayload = {
   id?: string;
   volume?: number; // 0.0–1.0; absent means 1.0
 };
+
+export type TGetSoundDataResponse = {
+  fileData: string; // base64-encoded audio file contents
+  mimeType: string;
+};
