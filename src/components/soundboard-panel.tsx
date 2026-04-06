@@ -356,6 +356,7 @@ const WaveformEditor = ({
   duration,
   trimStart,
   trimEnd,
+  playheadPct,
   onTrimStartChange,
   onTrimEndChange,
 }: {
@@ -363,6 +364,7 @@ const WaveformEditor = ({
   duration: number;
   trimStart: number;
   trimEnd: number;
+  playheadPct: number | null;
   onTrimStartChange: (t: number) => void;
   onTrimEndChange: (t: number) => void;
 }) => {
@@ -459,6 +461,13 @@ const WaveformEditor = ({
         <div className="absolute inset-y-0" style={{ left: '50%', width: 2, background: 'rgba(255,255,255,0.9)', transform: 'translateX(-50%)' }} />
         <div className="relative w-3 h-3 rounded-full bg-white shadow border border-gray-300" />
       </div>
+      {/* Playhead */}
+      {playheadPct !== null && (
+        <div
+          className="absolute inset-y-0 w-0.5 bg-white/90 pointer-events-none z-20"
+          style={{ left: `${playheadPct * 100}%`, transform: 'translateX(-50%)', boxShadow: '0 0 4px rgba(255,255,255,0.6)' }}
+        />
+      )}
     </div>
   );
 };
@@ -490,6 +499,7 @@ const AudioTrimmer = ({
   const [duration, setDuration] = useState(0);
   const [decoding, setDecoding] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playheadPct, setPlayheadPct] = useState<number | null>(null);
   const onReadyRef = useRef(onReady);
   useEffect(() => { onReadyRef.current = onReady; });
 
@@ -498,8 +508,14 @@ const AudioTrimmer = ({
   // Hold the active preview AudioContext + source so we can stop them
   const previewCtxRef = useRef<AudioContext | null>(null);
   const previewSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const animFrameRef = useRef<number | null>(null);
 
   const stopPreview = useCallback(() => {
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    setPlayheadPct(null);
     if (previewSourceRef.current) {
       try { previewSourceRef.current.stop(); } catch { /* already stopped */ }
       previewSourceRef.current = null;
@@ -535,11 +551,30 @@ const AudioTrimmer = ({
     const trimDuration = trimEnd - trimStart;
     source.start(0, trimStart, trimDuration);
 
+    // Animate playhead via rAF
+    const startedAt = ctx.currentTime;
+    const fullDuration = buf.duration;
+    const tick = () => {
+      const pos = trimStart + (ctx.currentTime - startedAt);
+      setPlayheadPct(Math.min(pos, trimEnd) / fullDuration);
+      if (pos < trimEnd) {
+        animFrameRef.current = requestAnimationFrame(tick);
+      } else {
+        animFrameRef.current = null;
+      }
+    };
+    animFrameRef.current = requestAnimationFrame(tick);
+
     source.onended = () => {
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
       ctx.close().catch(() => {});
       previewCtxRef.current = null;
       previewSourceRef.current = null;
       setIsPlaying(false);
+      setPlayheadPct(null);
     };
 
     previewCtxRef.current = ctx;
@@ -630,6 +665,7 @@ const AudioTrimmer = ({
           duration={duration}
           trimStart={trimStart}
           trimEnd={trimEnd}
+          playheadPct={playheadPct}
           onTrimStartChange={onTrimStartChange}
           onTrimEndChange={onTrimEndChange}
         />
