@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { access, chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { inflateRaw } from 'node:zlib';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
@@ -113,6 +113,36 @@ const ensureFfmpegBinary = async (pluginPath: string, log: (msg: string) => void
   await access(ffmpegPath, fsConstants.X_OK);
   return ffmpegPath;
 };
+
+// Trim an audio file in-place using ffmpeg (-ss / -to, stream copy).
+const trimAudioWithFfmpeg = (
+  ffmpegPath: string,
+  filePath: string,
+  trimStart: number,
+  trimEnd: number,
+): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const ext = filePath.slice(filePath.lastIndexOf('.'));
+    const tmpPath = `${filePath}.trimming${ext}`;
+    const proc = spawn(ffmpegPath, [
+      '-y',
+      '-i', filePath,
+      '-ss', String(trimStart),
+      '-to', String(trimEnd),
+      '-c', 'copy',
+      tmpPath,
+    ]);
+    let stderr = '';
+    proc.stderr.on('data', (chunk: Buffer) => { stderr += String(chunk); });
+    proc.on('error', reject);
+    proc.on('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg trim failed (code ${code}): ${stderr.slice(-300)}`));
+        return;
+      }
+      rename(tmpPath, filePath).then(resolve).catch(reject);
+    });
+  });
 
 const loadSounds = async (pluginPath: string): Promise<TSoundEntry[]> => {
   try {
@@ -602,6 +632,10 @@ const onLoad = async (ctx: PluginContext) => {
 
       await writeFile(localPath, fileBuffer);
 
+      if (payload.trimStart !== undefined && payload.trimEnd !== undefined) {
+        await trimAudioWithFfmpeg(ffmpegBinaryPath, localPath, payload.trimStart, payload.trimEnd);
+      }
+
       const sounds = await loadSounds(ctx.path);
       const newEntry: TSoundEntry = {
         id: soundId,
@@ -649,6 +683,8 @@ const onLoad = async (ctx: PluginContext) => {
       volume?: number;
       fileData?: string;
       mimeType?: string;
+      trimStart?: number;
+      trimEnd?: number;
     }) {
       const name = payload.name.trim();
       const emoji = payload.emoji.trim();
@@ -663,7 +699,7 @@ const onLoad = async (ctx: PluginContext) => {
       if (payload.volume !== undefined) update.volume = payload.volume;
       else update.volume = undefined; // allow clearing volume back to default
 
-      // Optionally replace the audio file (e.g. after client-side trim)
+      // Optionally replace the audio file (e.g. when a new file is uploaded during edit)
       if (payload.fileData && payload.mimeType) {
         const fileBuffer = Buffer.from(payload.fileData, 'base64');
         if (fileBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
@@ -678,6 +714,12 @@ const onLoad = async (ctx: PluginContext) => {
         await writeFile(newLocalPath, fileBuffer);
         update.localPath = newLocalPath;
         update.mimeType = payload.mimeType;
+      }
+
+      // Apply server-side trim to the stored file (new or existing) if requested
+      if (payload.trimStart !== undefined && payload.trimEnd !== undefined) {
+        const fileToTrim = update.localPath ?? sounds[idx].localPath;
+        await trimAudioWithFfmpeg(ffmpegBinaryPath, fileToTrim, payload.trimStart, payload.trimEnd);
       }
 
       sounds[idx] = { ...sounds[idx], ...update };
