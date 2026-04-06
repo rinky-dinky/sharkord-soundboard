@@ -356,7 +356,7 @@ const WaveformEditor = ({
   duration,
   trimStart,
   trimEnd,
-  playheadPct,
+  playheadRef,
   onTrimStartChange,
   onTrimEndChange,
 }: {
@@ -364,7 +364,7 @@ const WaveformEditor = ({
   duration: number;
   trimStart: number;
   trimEnd: number;
-  playheadPct: number | null;
+  playheadRef: React.RefObject<HTMLDivElement | null>;
   onTrimStartChange: (t: number) => void;
   onTrimEndChange: (t: number) => void;
 }) => {
@@ -461,13 +461,12 @@ const WaveformEditor = ({
         <div className="absolute inset-y-0" style={{ left: '50%', width: 2, background: 'rgba(255,255,255,0.9)', transform: 'translateX(-50%)' }} />
         <div className="relative w-3 h-3 rounded-full bg-white shadow border border-gray-300" />
       </div>
-      {/* Playhead */}
-      {playheadPct !== null && (
-        <div
-          className="absolute inset-y-0 w-0.5 bg-white/90 pointer-events-none z-20"
-          style={{ left: `${playheadPct * 100}%`, transform: 'translateX(-50%)', boxShadow: '0 0 4px rgba(255,255,255,0.6)' }}
-        />
-      )}
+      {/* Playhead — hidden by default, shown/moved imperatively via playheadRef */}
+      <div
+        ref={playheadRef}
+        className="absolute inset-y-0 w-0.5 pointer-events-none z-20"
+        style={{ display: 'none', left: '0%', transform: 'translateX(-50%)', background: 'rgba(255,255,255,0.9)', boxShadow: '0 0 4px rgba(255,255,255,0.6)' }}
+      />
     </div>
   );
 };
@@ -499,7 +498,6 @@ const AudioTrimmer = ({
   const [duration, setDuration] = useState(0);
   const [decoding, setDecoding] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playheadPct, setPlayheadPct] = useState<number | null>(null);
   const onReadyRef = useRef(onReady);
   useEffect(() => { onReadyRef.current = onReady; });
 
@@ -509,13 +507,16 @@ const AudioTrimmer = ({
   const previewCtxRef = useRef<AudioContext | null>(null);
   const previewSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  // Direct ref to the playhead DOM element — updated imperatively to avoid
+  // triggering React re-renders on every animation frame.
+  const playheadRef = useRef<HTMLDivElement | null>(null);
 
   const stopPreview = useCallback(() => {
     if (animFrameRef.current !== null) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
     }
-    setPlayheadPct(null);
+    if (playheadRef.current) playheadRef.current.style.display = 'none';
     if (previewSourceRef.current) {
       try { previewSourceRef.current.stop(); } catch { /* already stopped */ }
       previewSourceRef.current = null;
@@ -551,12 +552,17 @@ const AudioTrimmer = ({
     const trimDuration = trimEnd - trimStart;
     source.start(0, trimStart, trimDuration);
 
-    // Animate playhead via rAF
+    // Move the playhead div directly — no React state, no re-renders.
     const startedAt = ctx.currentTime;
     const fullDuration = buf.duration;
     const tick = () => {
       const pos = trimStart + (ctx.currentTime - startedAt);
-      setPlayheadPct(Math.min(pos, trimEnd) / fullDuration);
+      const pct = Math.min(pos, trimEnd) / fullDuration;
+      const el = playheadRef.current;
+      if (el) {
+        el.style.display = 'block';
+        el.style.left = `${pct * 100}%`;
+      }
       if (pos < trimEnd) {
         animFrameRef.current = requestAnimationFrame(tick);
       } else {
@@ -570,11 +576,11 @@ const AudioTrimmer = ({
         cancelAnimationFrame(animFrameRef.current);
         animFrameRef.current = null;
       }
+      if (playheadRef.current) playheadRef.current.style.display = 'none';
       ctx.close().catch(() => {});
       previewCtxRef.current = null;
       previewSourceRef.current = null;
       setIsPlaying(false);
-      setPlayheadPct(null);
     };
 
     previewCtxRef.current = ctx;
@@ -665,7 +671,7 @@ const AudioTrimmer = ({
           duration={duration}
           trimStart={trimStart}
           trimEnd={trimEnd}
-          playheadPct={playheadPct}
+          playheadRef={playheadRef}
           onTrimStartChange={onTrimStartChange}
           onTrimEndChange={onTrimEndChange}
         />
