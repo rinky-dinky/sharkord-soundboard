@@ -704,6 +704,39 @@ const onLoad = async (ctx: PluginContext) => {
   });
 
   ctx.actions.register({
+    name: 'get_emoji_data',
+    async execute(_invokerCtx: TInvokerContext, payload: { fileName: string }) {
+      const { fileName } = payload;
+      // Validate: must be a plain filename with no path separators or traversal
+      if (!fileName || fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) {
+        throw new Error('Invalid emoji file name');
+      }
+      const envPublicDir = process.env.SHARKORD_PUBLIC_DIR?.trim();
+      const candidates = [
+        envPublicDir,
+        join(ctx.path, '..', '..', 'public'),
+        join(ctx.path, '..', 'public'),
+        '/public',
+      ].filter((v): v is string => Boolean(v));
+      for (const dir of candidates) {
+        const filePath = join(dir, fileName);
+        try {
+          const fileBuffer = await readFile(filePath);
+          const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+          const mimeMap: Record<string, string> = {
+            png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+            gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+          };
+          return { fileData: fileBuffer.toString('base64'), mimeType: mimeMap[ext] ?? 'image/png' };
+        } catch {
+          // try next candidate
+        }
+      }
+      throw new Error(`Emoji file not found: ${fileName}`);
+    }
+  });
+
+  ctx.actions.register({
     name: 'warmup_soundboard',
     async execute(invokerCtx: TInvokerContext) {
       if (!invokerCtx.currentVoiceChannelId) return { ok: true };

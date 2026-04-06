@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { TPluginEmoji } from '@sharkord/plugin-sdk';
 import type { TListSoundsResponse, TSoundInfo } from '../types';
@@ -86,6 +86,145 @@ const NATIVE_EMOJI_PAGES: string[][] = [
   ],
 ];
 
+// Flat list of every native emoji paired with searchable keywords.
+// Used to filter the picker when the user types in the search box.
+const NATIVE_EMOJI_DATA: Array<[string, string]> = [
+  // Smileys
+  ['😀', 'grinning smile happy face'], ['😃', 'smiley smile big eyes happy'], ['😄', 'smile happy grin face'],
+  ['😁', 'grin beaming smile face'], ['😆', 'laughing satisfied smile face'], ['😅', 'sweat smile nervous face'],
+  ['🤣', 'rofl rolling floor laugh cry'], ['😂', 'joy laugh cry tears face'],
+  ['🙂', 'slightly smiling face'], ['🙃', 'upside down smile face'], ['😉', 'wink face'], ['😊', 'blush smile happy face'],
+  ['😇', 'innocent halo angel face'], ['🥰', 'hearts love adore smiling'], ['😍', 'heart eyes love face'],
+  ['🤩', 'star struck excited wow face'], ['😘', 'kiss heart face'], ['😗', 'kissing face'],
+  ['😚', 'kiss closed eyes face'], ['😙', 'kiss smiling face'], ['😋', 'yum tasty tongue face'],
+  ['😛', 'tongue face'], ['😜', 'wink tongue face'], ['🤪', 'zany crazy wacky face'],
+  ['😝', 'squinting tongue face'], ['🤑', 'money mouth rich face'], ['🤗', 'hug hugging face'],
+  ['🤭', 'hand over mouth giggle face'], ['🫢', 'gasp shocked face'], ['🫣', 'peek eye face'],
+  ['🤫', 'shush quiet secret face'], ['🤔', 'thinking hmm face'], ['🫡', 'salute military face'],
+  ['🤐', 'zipper mouth quiet face'], ['🤨', 'raised eyebrow suspicious face'], ['😐', 'neutral face blank'],
+  ['😑', 'expressionless blank face'], ['😶', 'no mouth silent face'], ['🫥', 'dotted line invisible face'],
+  ['😏', 'smirk face'],
+  // More faces & hands
+  ['😒', 'unamused face'], ['🙄', 'eye roll face'], ['😬', 'grimacing teeth face'], ['🤥', 'lying pinocchio face'],
+  ['😌', 'relieved calm face'], ['😔', 'pensive sad face'], ['😪', 'sleepy tired face'], ['🤤', 'drooling face'],
+  ['😴', 'sleeping zzz face'], ['😷', 'mask sick ill face'], ['🤒', 'thermometer sick fever face'],
+  ['🤕', 'bandage hurt injured face'], ['🤢', 'nauseated sick green face'], ['🤮', 'vomit sick face'],
+  ['🤧', 'sneezing cold face'], ['🥵', 'hot flushed face'], ['🥶', 'cold frozen face'],
+  ['🥴', 'woozy drunk dizzy face'], ['😵', 'dizzy spiral face'], ['🤯', 'exploding mind blown face'],
+  ['🤠', 'cowboy hat face'], ['🥳', 'party celebrate face'], ['😎', 'cool sunglasses face'], ['🤓', 'nerd glasses face'],
+  ['😱', 'scream scared fear face'], ['😤', 'steam angry frustrated face'], ['😡', 'angry mad red face'],
+  ['🤬', 'rage swearing cursing angry face'], ['😈', 'devil smiling evil face'], ['👿', 'devil angry imp face'],
+  ['💀', 'skull dead'], ['☠️', 'skull crossbones pirate dead'],
+  ['👋', 'wave hand'], ['🤚', 'raised back hand'], ['🖐️', 'hand open fingers'], ['✋', 'raised hand stop'],
+  ['🤙', 'call hang loose shaka hand'], ['👍', 'thumbs up like good'], ['👎', 'thumbs down dislike bad'],
+  ['👏', 'clap applause hands'],
+  // Sound, music & entertainment
+  ['🦈', 'shark fish ocean'], ['🔊', 'loud speaker volume sound audio'], ['🎵', 'musical note song music'],
+  ['🎶', 'musical notes music song'], ['🎧', 'headphones music listen'], ['🎤', 'microphone mic sing'],
+  ['📣', 'megaphone announcement loud'], ['🎚️', 'level slider audio fader'],
+  ['🎸', 'guitar music rock'], ['🥁', 'drum music beat percussion'], ['🎷', 'saxophone jazz music'],
+  ['🎺', 'trumpet music brass'], ['🎻', 'violin music string'], ['🪕', 'banjo country music'],
+  ['🎹', 'piano keyboard music'], ['🪗', 'accordion music'],
+  ['🎉', 'party popper celebrate confetti'], ['🎊', 'confetti celebrate party'], ['🎈', 'balloon party celebrate'],
+  ['🎁', 'gift present wrapped'], ['🏆', 'trophy winner award'], ['🥇', 'gold medal first place'],
+  ['🎯', 'bullseye target dart'], ['🎮', 'video game controller gaming'],
+  ['🕹️', 'joystick game arcade'], ['🎲', 'dice game random'], ['♟️', 'chess piece strategy'],
+  ['🎪', 'circus tent'], ['🎭', 'theater drama arts'], ['🎨', 'palette art paint'],
+  ['🎬', 'clapperboard movie film cinema'], ['🎼', 'musical score sheet music'],
+  ['📻', 'radio broadcast'], ['📺', 'television tv screen'], ['📷', 'camera photo picture'],
+  ['📸', 'camera flash selfie photo'], ['🔭', 'telescope space stars astronomy'],
+  ['🔬', 'microscope science lab'], ['💻', 'laptop computer'], ['🖥️', 'desktop monitor computer'],
+  // Animals
+  ['🐶', 'dog pet puppy animal'], ['🐱', 'cat pet kitten animal'], ['🐭', 'mouse rodent animal'],
+  ['🐹', 'hamster cute animal'], ['🐰', 'rabbit bunny animal'], ['🦊', 'fox animal'], ['🐻', 'bear animal'],
+  ['🐼', 'panda bear animal'], ['🐨', 'koala australia animal'], ['🐯', 'tiger wild cat animal'],
+  ['🦁', 'lion king wild animal'], ['🐮', 'cow farm animal'], ['🐷', 'pig farm oink animal'],
+  ['🐸', 'frog green animal'], ['🐵', 'monkey ape animal'], ['🙈', 'see no evil monkey'],
+  ['🙉', 'hear no evil monkey'], ['🙊', 'speak no evil monkey'],
+  ['🐔', 'chicken hen bird animal'], ['🐧', 'penguin cold bird animal'], ['🐦', 'bird fly feather animal'],
+  ['🦅', 'eagle bird predator animal'], ['🦆', 'duck quack animal'], ['🦉', 'owl wise bird animal'],
+  ['🐺', 'wolf wild animal'], ['🐴', 'horse pony animal'], ['🦄', 'unicorn magical horse'],
+  ['🐝', 'bee honey insect animal'], ['🦋', 'butterfly insect animal'], ['🐌', 'snail slow animal'],
+  ['🐞', 'ladybug insect bug animal'], ['🐜', 'ant insect colony animal'],
+  ['🦎', 'lizard reptile animal'], ['🐢', 'turtle slow reptile animal'], ['🐍', 'snake reptile animal'],
+  ['🦕', 'sauropod dinosaur long neck'], ['🦖', 't-rex dinosaur tyrannosaurus'],
+  ['🐳', 'whale ocean big animal'], ['🐬', 'dolphin ocean smart animal'], ['🐟', 'fish ocean sea animal'],
+  // Food & symbols
+  ['🍎', 'apple red fruit food'], ['🍊', 'orange fruit food'], ['🍋', 'lemon sour fruit food'],
+  ['🍇', 'grapes purple fruit food'], ['🍓', 'strawberry red fruit food'], ['🍒', 'cherries red fruit food'],
+  ['🍑', 'peach fruit food'], ['🥝', 'kiwi green fruit food'],
+  ['🍕', 'pizza food'], ['🍔', 'burger hamburger food'], ['🌮', 'taco mexican food'],
+  ['🍣', 'sushi japanese food fish'], ['🍜', 'noodle ramen soup food'], ['🍦', 'ice cream dessert cold'],
+  ['🍰', 'shortcake slice dessert sweet food'], ['🎂', 'birthday cake celebrate food'],
+  ['☕', 'coffee hot drink warm'], ['🍵', 'tea hot drink'], ['🍺', 'beer drink alcohol'],
+  ['🍻', 'beers cheers clinking alcohol'], ['🥂', 'champagne toast celebrate'], ['🍷', 'wine red drink alcohol'],
+  ['🧃', 'juice drink box'], ['🥤', 'cup straw drink'],
+  ['❤️', 'red heart love romance'], ['🧡', 'orange heart love'], ['💛', 'yellow heart love'],
+  ['💚', 'green heart love'], ['💙', 'blue heart love'], ['💜', 'purple heart love'],
+  ['🖤', 'black heart love'], ['🤍', 'white heart love'],
+  ['💯', 'hundred percent perfect'], ['✅', 'check mark done yes green'],
+  ['❌', 'cross x no wrong'], ['⚠️', 'warning caution alert'],
+  ['🔥', 'fire hot flame'], ['💥', 'boom explosion blast'], ['⭐', 'star yellow'], ['🌟', 'glowing star shine'],
+  // Nature & weather
+  ['🌸', 'cherry blossom pink flower spring'], ['🌺', 'hibiscus flower red'],
+  ['🌻', 'sunflower yellow flower'], ['🌹', 'rose flower red romance'], ['🌷', 'tulip flower pink'],
+  ['🌼', 'blossom flower yellow'], ['🌾', 'wheat grain farm'], ['🍀', 'four leaf clover lucky'],
+  ['🍁', 'maple leaf autumn fall canada'], ['🍂', 'fallen leaves autumn'], ['🍃', 'leaf fluttering wind'],
+  ['🌿', 'herb plant green'], ['🌱', 'seedling sprout plant'], ['🌲', 'evergreen tree pine'],
+  ['🌳', 'deciduous tree green'], ['🌴', 'palm tree tropical'], ['🌵', 'cactus desert'], ['☘️', 'shamrock clover ireland'],
+  ['🍄', 'mushroom fungi'], ['🌊', 'wave ocean water sea'], ['🌈', 'rainbow colorful weather'],
+  ['⛅', 'sun cloud weather partly cloudy'], ['🌤️', 'sun small cloud weather'], ['🌧️', 'rain cloud weather'],
+  ['⛈️', 'thunder lightning storm'], ['🌩️', 'lightning bolt storm'], ['❄️', 'snowflake cold winter ice'],
+  ['☃️', 'snowman winter cold'], ['⛄', 'snowman outside winter'], ['🌬️', 'wind blowing air'], ['💨', 'dash wind air'],
+  ['🌙', 'crescent moon night'], ['🌑', 'new moon dark'], ['🌒', 'waxing crescent moon'],
+  ['🌓', 'first quarter moon'], ['🌔', 'waxing gibbous moon'], ['🌕', 'full moon bright'],
+  ['☀️', 'sun sunny bright day'], ['🌝', 'full moon face'], ['🌞', 'sun face bright'],
+  // Travel & places
+  ['🚀', 'rocket space launch'], ['✈️', 'airplane plane fly travel'], ['🚂', 'locomotive train railway'],
+  ['🚗', 'car automobile drive'], ['🚕', 'taxi cab yellow'], ['🚙', 'suv car vehicle'], ['🚌', 'bus transit transport'],
+  ['🏎️', 'racing car fast sport'], ['🛸', 'ufo flying saucer alien space'], ['🚁', 'helicopter fly rotor'],
+  ['⛵', 'sailboat boat water'], ['🚢', 'ship cruise ocean'], ['🛳️', 'cruise ship passenger'],
+  ['🏖️', 'beach vacation sand'], ['🏝️', 'island tropical beach'], ['🏔️', 'mountain peak snow'],
+  ['🗻', 'mount fuji japan mountain'], ['🌋', 'volcano eruption lava'],
+  ['🗼', 'eiffel tower paris france'], ['🗽', 'statue liberty usa america'],
+  ['🏰', 'european castle medieval'], ['🏯', 'japanese castle'], ['🏟️', 'stadium sport arena'],
+  ['🎡', 'ferris wheel carnival'], ['🎢', 'roller coaster amusement park'], ['🎠', 'carousel merry go round'],
+  ['🌃', 'night stars city'], ['🌆', 'city sunrise buildings'], ['🌇', 'sunset city skyline'],
+  ['🌉', 'bridge night city'], ['🌁', 'foggy city morning'], ['🌐', 'globe earth world'],
+  ['🗺️', 'world map geography'], ['🧭', 'compass direction navigation'],
+  ['🏕️', 'camping tent outdoors'], ['⛺', 'tent camping'], ['🛖', 'hut cabin home'],
+  ['🏠', 'house home'], ['🏡', 'house garden home'], ['🏢', 'office building city'],
+  // Objects & tools
+  ['💡', 'lightbulb idea bright'], ['🔦', 'flashlight torch light'], ['🕯️', 'candle light flame'],
+  ['🔑', 'key lock door'], ['🗝️', 'old key antique'], ['🔒', 'locked secure closed'], ['🔓', 'unlocked open'],
+  ['🔨', 'hammer tool'], ['⚒️', 'hammer pick tools'], ['🛠️', 'tools hammer wrench'], ['⛏️', 'pickaxe mining'],
+  ['🪛', 'screwdriver tool'], ['🪚', 'saw tool wood'], ['🔧', 'wrench tool fix'], ['🪤', 'mouse trap'],
+  ['🧲', 'magnet attract'], ['💣', 'bomb explosive'], ['🧨', 'firecracker explosion'],
+  ['🪓', 'axe chop wood'], ['🔮', 'crystal ball predict magic'], ['🪄', 'magic wand spell'],
+  ['🧿', 'nazar evil eye blue'], ['💎', 'gem diamond jewel'], ['👑', 'crown king queen royal'],
+  ['🎩', 'top hat magic formal'], ['🎓', 'graduation cap student school'], ['👓', 'glasses vision reading'],
+  ['🕶️', 'sunglasses cool shade'], ['🥽', 'goggles protection safety'], ['💍', 'ring engagement wedding'],
+  ['💰', 'money bag cash rich'], ['💵', 'dollar bill money'], ['🪙', 'coin money gold'],
+  ['💳', 'credit card payment'], ['📱', 'phone mobile cell'], ['⌨️', 'keyboard typing computer'],
+  ['🖱️', 'computer mouse click'], ['🖨️', 'printer paper computer'], ['📦', 'package box parcel'],
+  ['🧰', 'toolbox tools'],
+  // Sports & activities
+  ['⚽', 'soccer football sport'], ['🏀', 'basketball sport'], ['🏈', 'american football sport'],
+  ['⚾', 'baseball sport'], ['🥎', 'softball sport'], ['🏐', 'volleyball sport'], ['🏉', 'rugby sport'],
+  ['🎾', 'tennis sport'], ['🏸', 'badminton shuttlecock sport'], ['🏒', 'ice hockey sport'],
+  ['🥊', 'boxing gloves fight sport'], ['🥋', 'martial arts karate judo sport'],
+  ['🏹', 'bow arrow archery sport'], ['🎣', 'fishing rod fish'], ['🤿', 'diving goggles snorkel underwater'],
+  ['🎽', 'running shirt sport athletics'], ['🛹', 'skateboard skate'], ['🛷', 'sled sledge snow'],
+  ['⛸️', 'ice skate skating winter'], ['🥌', 'curling stone sport'], ['🏂', 'snowboard winter sport'],
+  ['🪂', 'parachute skydive'], ['🏋️', 'weightlifting gym strength'], ['🤸', 'gymnastics cartwheel'],
+  ['⛹️', 'basketball person sport'], ['🏇', 'horse racing jockey'], ['🧗', 'climbing rock wall'],
+  ['🏊', 'swimming pool sport'], ['🚣', 'rowing boat water'], ['🚴', 'cycling bike bicycle'],
+  ['🥈', 'silver medal second place'], ['🥉', 'bronze medal third place'], ['🎖️', 'military medal honor'],
+  ['🏅', 'sports medal award'], ['🎗️', 'ribbon award reminder'], ['🏌️', 'golfing golf sport'],
+  ['🧘', 'yoga meditation lotus calm'], ['🤺', 'fencing sword sport'], ['🤼', 'wrestling sport fight'],
+  ['🤾', 'handball sport'],
+];
+
 const SOUNDS_PER_PAGE = 20;
 const CUSTOM_EMOJI_PAGE_SIZE = 40;
 
@@ -103,13 +242,46 @@ const customEmojiUrl = (emoji: TPluginEmoji): string => {
   return base;
 };
 
+// Context that provides a function to load emoji image data from local disk via
+// the get_emoji_data plugin action, bypassing access-token authentication.
+type TEmojiDataFetcher = (fileName: string) => Promise<{ fileData: string; mimeType: string }>;
+const EmojiDataContext = createContext<TEmojiDataFetcher | null>(null);
+
+// Module-level cache so the same file is never fetched twice across re-renders.
+const emojiDataCache = new Map<string, string>(); // fileName → data URL
+
 // Renders a single emoji value — either a unicode character or a custom image.
-const EmojiDisplay = ({ value, className }: { value: string; className?: string }) =>
-  isCustomEmoji(value) ? (
-    <img src={value} className={`inline-block object-contain align-middle ${className ?? 'h-5 w-5'}`} alt="" />
-  ) : (
-    <>{value}</>
+// When an EmojiDataContext fetcher is available, custom images are loaded from
+// local disk (no access-token needed); otherwise the stored URL is used as fallback.
+const EmojiDisplay = ({ value, className }: { value: string; className?: string }) => {
+  const getEmojiData = useContext(EmojiDataContext);
+
+  // Extract plain filename from "/public/<name>" (strip any ?accessToken=... query)
+  const fileName = isCustomEmoji(value)
+    ? value.replace(/^\/public\//, '').split('?')[0]
+    : null;
+
+  const [dataUrl, setDataUrl] = useState<string | null>(
+    fileName ? (emojiDataCache.get(fileName) ?? null) : null
   );
+
+  useEffect(() => {
+    if (!fileName || !getEmojiData || dataUrl) return;
+    getEmojiData(fileName)
+      .then(({ fileData, mimeType }) => {
+        const url = `data:${mimeType};base64,${fileData}`;
+        emojiDataCache.set(fileName, url);
+        setDataUrl(url);
+      })
+      .catch(() => {});
+  }, [fileName, getEmojiData, dataUrl]);
+
+  if (!isCustomEmoji(value)) return <>{value}</>;
+  // While the data URL is loading, fall back to the stored URL so the image
+  // still renders if the token is still valid.
+  const src = dataUrl ?? value;
+  return <img src={src} className={`inline-block object-contain align-middle ${className ?? 'h-5 w-5'}`} alt="" />;
+};
 
 // Compact numbered page buttons, hidden when there is only one page.
 const PageButtons = ({
@@ -156,16 +328,18 @@ const EmojiPicker = ({
   const [tab, setTab] = useState<'native' | 'custom'>('native');
   const [nativePage, setNativePage] = useState(0);
   const [customPage, setCustomPage] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const hasCustom = customEmojis.length > 0;
 
   const handleToggle = () => {
     if (!open && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
       const dropdownWidth = 296;
-      const dropdownHeight = 260;
+      const dropdownHeight = 310;
       let top = rect.bottom + 4;
       if (top + dropdownHeight > window.innerHeight - 8) {
         top = rect.top - dropdownHeight - 4;
@@ -180,7 +354,12 @@ const EmojiPicker = ({
   };
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setSearchQuery('');
+      return;
+    }
+    // Focus search input when dropdown opens
+    const id = setTimeout(() => searchInputRef.current?.focus(), 0);
     const handleMouseDown = (e: MouseEvent) => {
       if (
         !buttonRef.current?.contains(e.target as Node) &&
@@ -190,9 +369,13 @@ const EmojiPicker = ({
       }
     };
     document.addEventListener('mousedown', handleMouseDown);
-    return () => document.removeEventListener('mousedown', handleMouseDown);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener('mousedown', handleMouseDown);
+    };
   }, [open]);
 
+  // Store without access token so it doesn't expire in sounds.json
   const pick = (v: string) => {
     onChange(v);
     setOpen(false);
@@ -204,6 +387,17 @@ const EmojiPicker = ({
     (customPage + 1) * CUSTOM_EMOJI_PAGE_SIZE,
   );
 
+  // Compute search results when a query is active
+  const q = searchQuery.trim().toLowerCase();
+  const searchNativeResults = q
+    ? NATIVE_EMOJI_DATA.filter(([, keywords]) => keywords.split(' ').some((kw) => kw.startsWith(q)))
+    : null;
+  const searchCustomResults = q
+    ? customEmojis.filter((e) => e.name.toLowerCase().includes(q))
+    : null;
+
+  const isSearching = q.length > 0;
+
   const dropdown = dropdownPos ? (
     <div
       ref={dropdownRef}
@@ -211,61 +405,120 @@ const EmojiPicker = ({
       className="rounded border bg-background shadow-md"
       data-emoji-picker-dropdown
     >
-      {hasCustom ? (
-        <div className="flex border-b text-xs">
-          <button
-            type="button"
-            onClick={() => setTab('native')}
-            className={`flex-1 py-1.5 hover:bg-accent ${tab === 'native' ? 'font-semibold' : 'opacity-60'}`}
-          >
-            Emoji
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('custom')}
-            className={`flex-1 py-1.5 hover:bg-accent ${tab === 'custom' ? 'font-semibold' : 'opacity-60'}`}
-          >
-            Custom
-          </button>
-        </div>
-      ) : null}
+      {/* Search bar */}
+      <div className="p-1.5 border-b">
+        <input
+          ref={searchInputRef}
+          type="text"
+          value={searchQuery}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
+          placeholder="Search emoji…"
+          className="w-full rounded border bg-transparent px-2 py-1 text-xs outline-none focus:border-accent"
+        />
+      </div>
 
-      {tab === 'native' || !hasCustom ? (
-        <div className="p-2 flex flex-col gap-1.5">
-          <div className="grid grid-cols-8 gap-1">
-            {NATIVE_EMOJI_PAGES[nativePage].map((candidate) => (
-              <button
-                key={candidate}
-                type="button"
-                onClick={() => pick(candidate)}
-                className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
-              >
-                {candidate}
-              </button>
-            ))}
-          </div>
-          <PageButtons page={nativePage} pageCount={NATIVE_EMOJI_PAGES.length} onPage={setNativePage} />
+      {isSearching ? (
+        // ── Search results ──────────────────────────────────────────────────
+        <div className="p-2 max-h-52 overflow-y-auto sounddrop-scroll">
+          {(searchNativeResults?.length ?? 0) === 0 && (searchCustomResults?.length ?? 0) === 0 ? (
+            <p className="text-center text-xs opacity-50 py-4">No results</p>
+          ) : null}
+          {(searchNativeResults?.length ?? 0) > 0 && (
+            <div className="grid grid-cols-8 gap-1">
+              {searchNativeResults!.map(([candidate]) => (
+                <button
+                  key={candidate}
+                  type="button"
+                  onClick={() => pick(candidate)}
+                  className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
+                >
+                  {candidate}
+                </button>
+              ))}
+            </div>
+          )}
+          {hasCustom && (searchCustomResults?.length ?? 0) > 0 && (
+            <>
+              {(searchNativeResults?.length ?? 0) > 0 && <div className="border-t my-1.5" />}
+              <div className="grid grid-cols-8 gap-1">
+                {searchCustomResults!.map((emoji) => {
+                  const storedUrl = `/public/${emoji.file.name}`;
+                  return (
+                    <button
+                      key={emoji.id}
+                      type="button"
+                      title={emoji.name}
+                      onClick={() => pick(storedUrl)}
+                      className={`rounded p-1 hover:bg-accent ${value === storedUrl ? 'bg-accent' : ''}`}
+                    >
+                      <EmojiDisplay value={storedUrl} className="h-7 w-7" />
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       ) : (
-        <div className="p-2 flex flex-col gap-1.5">
-          <div className="grid grid-cols-8 gap-1">
-            {visibleCustomEmojis.map((emoji) => {
-              const url = customEmojiUrl(emoji);
-              return (
-                <button
-                  key={emoji.id}
-                  type="button"
-                  title={emoji.name}
-                  onClick={() => pick(url)}
-                  className={`rounded p-1 hover:bg-accent ${value === url ? 'bg-accent' : ''}`}
-                >
-                  <img src={url} className="h-7 w-7 object-contain" alt={emoji.name} />
-                </button>
-              );
-            })}
-          </div>
-          <PageButtons page={customPage} pageCount={customPageCount} onPage={setCustomPage} />
-        </div>
+        // ── Normal tabbed view ───────────────────────────────────────────────
+        <>
+          {hasCustom ? (
+            <div className="flex border-b text-xs">
+              <button
+                type="button"
+                onClick={() => setTab('native')}
+                className={`flex-1 py-1.5 hover:bg-accent ${tab === 'native' ? 'font-semibold' : 'opacity-60'}`}
+              >
+                Emoji
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab('custom')}
+                className={`flex-1 py-1.5 hover:bg-accent ${tab === 'custom' ? 'font-semibold' : 'opacity-60'}`}
+              >
+                Custom
+              </button>
+            </div>
+          ) : null}
+
+          {tab === 'native' || !hasCustom ? (
+            <div className="p-2 flex flex-col gap-1.5">
+              <div className="grid grid-cols-8 gap-1">
+                {NATIVE_EMOJI_PAGES[nativePage].map((candidate) => (
+                  <button
+                    key={candidate}
+                    type="button"
+                    onClick={() => pick(candidate)}
+                    className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
+                  >
+                    {candidate}
+                  </button>
+                ))}
+              </div>
+              <PageButtons page={nativePage} pageCount={NATIVE_EMOJI_PAGES.length} onPage={setNativePage} />
+            </div>
+          ) : (
+            <div className="p-2 flex flex-col gap-1.5">
+              <div className="grid grid-cols-8 gap-1">
+                {visibleCustomEmojis.map((emoji) => {
+                  const storedUrl = `/public/${emoji.file.name}`;
+                  return (
+                    <button
+                      key={emoji.id}
+                      type="button"
+                      title={emoji.name}
+                      onClick={() => pick(storedUrl)}
+                      className={`rounded p-1 hover:bg-accent ${value === storedUrl ? 'bg-accent' : ''}`}
+                    >
+                      <EmojiDisplay value={storedUrl} className="h-7 w-7" />
+                    </button>
+                  );
+                })}
+              </div>
+              <PageButtons page={customPage} pageCount={customPageCount} onPage={setCustomPage} />
+            </div>
+          )}
+        </>
       )}
     </div>
   ) : null;
@@ -1291,7 +1544,15 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
 
   const selectedSound = sounds.find((s) => s.id === selectedSoundId) ?? null;
 
+  // Provides local-disk emoji loading to all EmojiDisplay descendants
+  const getEmojiData = useCallback(
+    (fileName: string) =>
+      executePluginAction<{ fileData: string; mimeType: string }>('get_emoji_data', { fileName }),
+    [executePluginAction],
+  );
+
   return (
+    <EmojiDataContext.Provider value={getEmojiData}>
     <div className="p-4 flex flex-col gap-3">
       <div className="sounddrop-scroll overflow-y-auto pr-2 pb-4" style={{ maxHeight: '23.8rem' }}>
         {sounds.length === 0 && isEditing ? (
@@ -1409,6 +1670,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
     </div>
+    </EmojiDataContext.Provider>
   );
 };
 
