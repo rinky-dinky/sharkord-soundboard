@@ -675,6 +675,25 @@ const onLoad = async (ctx: PluginContext) => {
   });
 
   ctx.actions.register({
+    name: 'reorder_sounds',
+    async execute(_invokerCtx: TInvokerContext, payload: { orderedIds: string[] }) {
+      const sounds = await loadSounds(ctx.path);
+      const idToSound = new Map(sounds.map((s) => [s.id, s]));
+      const reordered = payload.orderedIds.flatMap((id) => {
+        const s = idToSound.get(id);
+        return s ? [s] : [];
+      });
+      // Append any sounds not mentioned in orderedIds at the end
+      const mentioned = new Set(payload.orderedIds);
+      for (const s of sounds) {
+        if (!mentioned.has(s.id)) reordered.push(s);
+      }
+      await saveSounds(ctx.path, reordered);
+      return { ok: true };
+    }
+  });
+
+  ctx.actions.register({
     name: 'update_sound',
     async execute(_invokerCtx: TInvokerContext, payload: {
       soundId: string;

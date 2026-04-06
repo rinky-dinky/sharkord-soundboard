@@ -1246,6 +1246,8 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
   const [error, setError] = useState<string | null>(null);
   const [playingSoundIds, setPlayingSoundIds] = useState<Set<string>>(new Set());
   const [selectedSoundId, setSelectedSoundId] = useState<string | null>(null);
+  const dragSourceIdRef = useRef<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   // Trim / volume state for the Add Sound form
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
@@ -1281,15 +1283,20 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
         border-color: rgba(239,68,68,0.45) !important;
       }
       @keyframes sounddrop-wiggle {
-        0%   { transform: rotate(-2deg) translate(-0.5px,  0.5px); }
-        25%  { transform: rotate( 2deg) translate( 0.5px, -0.5px); }
-        50%  { transform: rotate(-2deg) translate(-0.5px, -0.5px); }
-        75%  { transform: rotate( 2deg) translate( 0.5px,  0.5px); }
-        100% { transform: rotate(-2deg) translate(-0.5px,  0.5px); }
+        0%   { transform: rotate(-1deg) translate(-0.3px,  0.3px); }
+        25%  { transform: rotate( 1deg) translate( 0.3px, -0.3px); }
+        50%  { transform: rotate(-1deg) translate(-0.3px, -0.3px); }
+        75%  { transform: rotate( 1deg) translate( 0.3px,  0.3px); }
+        100% { transform: rotate(-1deg) translate(-0.3px,  0.3px); }
       }
       .sounddrop-wiggle {
-        animation: sounddrop-wiggle 0.38s ease-in-out infinite;
+        animation: sounddrop-wiggle 0.45s ease-in-out infinite;
         transform-origin: center center;
+      }
+      .sounddrop-drag-over {
+        outline: 2px dashed rgba(96,165,250,0.7) !important;
+        outline-offset: -2px;
+        background: rgba(96,165,250,0.08) !important;
       }
       .sounddrop-selected {
         border-color: rgba(96,165,250,0.7) !important;
@@ -1513,6 +1520,35 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
             {sounds.map((sound, idx) => (
               <button
                 key={sound.id}
+                draggable={isEditing}
+                onDragStart={isEditing ? (e) => {
+                  dragSourceIdRef.current = sound.id;
+                  e.dataTransfer.effectAllowed = 'move';
+                } : undefined}
+                onDragOver={isEditing ? (e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragSourceIdRef.current !== sound.id) setDragOverId(sound.id);
+                } : undefined}
+                onDragLeave={isEditing ? () => setDragOverId(null) : undefined}
+                onDrop={isEditing ? (e) => {
+                  e.preventDefault();
+                  setDragOverId(null);
+                  const fromId = dragSourceIdRef.current;
+                  dragSourceIdRef.current = null;
+                  if (!fromId || fromId === sound.id) return;
+                  setSounds((prev) => {
+                    const fromIdx = prev.findIndex((s) => s.id === fromId);
+                    const toIdx = prev.findIndex((s) => s.id === sound.id);
+                    if (fromIdx === -1 || toIdx === -1) return prev;
+                    const next = [...prev];
+                    const [moved] = next.splice(fromIdx, 1);
+                    next.splice(toIdx, 0, moved);
+                    executePluginAction('reorder_sounds', { orderedIds: next.map((s) => s.id) }).catch(() => {});
+                    return next;
+                  });
+                } : undefined}
+                onDragEnd={isEditing ? () => { dragSourceIdRef.current = null; setDragOverId(null); } : undefined}
                 disabled={isEditing ? false : (!currentVoiceChannelId || loading)}
                 onClick={() => {
                   if (isEditing) {
@@ -1527,8 +1563,9 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
                   !isEditing && 'disabled:opacity-50',
                   isEditing && 'sounddrop-wiggle',
                   isEditing && sound.id === selectedSoundId && 'sounddrop-selected',
+                  isEditing && sound.id === dragOverId && 'sounddrop-drag-over',
                 ].filter(Boolean).join(' ')}
-                style={isEditing ? { animationDelay: `${(idx % 7) * 0.055}s` } : undefined}
+                style={isEditing ? { animationDelay: `${(idx % 7) * 0.055}s`, cursor: 'grab' } : undefined}
               >
                 <EmojiDisplay value={sound.emoji} className="h-5 w-5 shrink-0" />
                 <span className="truncate">{sound.name}</span>
