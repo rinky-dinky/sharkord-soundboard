@@ -24,6 +24,8 @@ export type TUploadSoundPayload = {
   mimeType: string;
   id?: string;
   volume?: number; // 0.0–1.0; absent means 1.0
+  trimStart?: number; // seconds; server-side ffmpeg trim applied after upload
+  trimEnd?: number;   // seconds; server-side ffmpeg trim applied after upload
 };
 
 export type TGetSoundDataResponse = {

@@ -561,42 +561,6 @@ const parseTime = (str: string): number | null => {
   return mins * 60 + secs;
 };
 
-const writeWavString = (view: DataView, offset: number, str: string): void => {
-  for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-};
-
-const encodeWAV = (buffer: AudioBuffer): ArrayBuffer => {
-  const numChannels = Math.min(buffer.numberOfChannels, 2);
-  const sampleRate = buffer.sampleRate;
-  const numSamples = buffer.length;
-  const dataSize = numSamples * numChannels * 2;
-  const ab = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(ab);
-  writeWavString(view, 0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeWavString(view, 8, 'WAVE');
-  writeWavString(view, 12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * numChannels * 2, true);
-  view.setUint16(32, numChannels * 2, true);
-  view.setUint16(34, 16, true);
-  writeWavString(view, 36, 'data');
-  view.setUint32(40, dataSize, true);
-  const channels: Float32Array[] = [];
-  for (let ch = 0; ch < numChannels; ch++) channels.push(buffer.getChannelData(ch));
-  let offset = 44;
-  for (let i = 0; i < numSamples; i++) {
-    for (let ch = 0; ch < numChannels; ch++) {
-      const s = Math.max(-1, Math.min(1, channels[ch][i]));
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      offset += 2;
-    }
-  }
-  return ab;
-};
 
 // ---------------------------------------------------------------------------
 // WaveformEditor: canvas waveform with draggable trim handles
@@ -1175,38 +1139,12 @@ const SoundManagePanel = ({
       const needsTrim = buffer !== null && audioDuration > 0 &&
         (trimStart > 0.01 || trimEnd < audioDuration - 0.01);
 
-      let fileData: string | undefined;
-      let mimeType: string | undefined;
-
-      if (needsTrim && buffer) {
-        const trimDuration = trimEnd - trimStart;
-        const offlineCtx = new OfflineAudioContext(
-          Math.min(buffer.numberOfChannels, 2),
-          Math.ceil(buffer.sampleRate * trimDuration),
-          buffer.sampleRate
-        );
-        const source = offlineCtx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(offlineCtx.destination);
-        source.start(0, trimStart, trimDuration);
-        const rendered = await offlineCtx.startRendering();
-        const wavBuffer = encodeWAV(rendered);
-        const bytes = new Uint8Array(wavBuffer);
-        let binary = '';
-        const chunk = 0x8000;
-        for (let i = 0; i < bytes.length; i += chunk) {
-          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-        }
-        fileData = btoa(binary);
-        mimeType = 'audio/wav';
-      }
-
       const updated = await executePluginAction<TSoundInfo>('update_sound', {
         soundId: sound.id,
         name: name.trim() || sound.name,
         emoji,
         volume: volume !== 100 ? volume / 100 : undefined,
-        ...(fileData ? { fileData, mimeType } : {}),
+        ...(needsTrim ? { trimStart, trimEnd } : {}),
       });
       onSaved(updated);
     } catch (e: unknown) {
@@ -1465,44 +1403,17 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
     setLoading(true);
     setError(null);
     try {
-      let fileData: string;
-      let mimeType: string;
+      const fileData = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => { resolve((reader.result as string).split(',')[1] ?? ''); };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const mimeType = file.type || 'audio/mpeg';
 
       const buffer = audioBufferRef.current;
       const needsTrim = buffer !== null && audioDuration > 0 &&
         (trimStart > 0.01 || trimEnd < audioDuration - 0.01);
-
-      if (needsTrim && buffer) {
-        const trimDuration = trimEnd - trimStart;
-        const offlineCtx = new OfflineAudioContext(
-          Math.min(buffer.numberOfChannels, 2),
-          Math.ceil(buffer.sampleRate * trimDuration),
-          buffer.sampleRate
-        );
-        const source = offlineCtx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(offlineCtx.destination);
-        source.start(0, trimStart, trimDuration);
-        const rendered = await offlineCtx.startRendering();
-        const wavBuffer = encodeWAV(rendered);
-        const bytes = new Uint8Array(wavBuffer);
-        // Convert to base64 in chunks to avoid call-stack overflow on large files
-        let binary = '';
-        const chunk = 0x8000;
-        for (let i = 0; i < bytes.length; i += chunk) {
-          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-        }
-        fileData = btoa(binary);
-        mimeType = 'audio/wav';
-      } else {
-        fileData = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => { resolve((reader.result as string).split(',')[1] ?? ''); };
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
-        mimeType = file.type || 'audio/mpeg';
-      }
 
       const newSound = await executePluginAction<TSoundInfo>('upload_sound', {
         name,
@@ -1510,6 +1421,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
         fileData,
         mimeType,
         ...(volume !== 100 ? { volume: volume / 100 } : {}),
+        ...(needsTrim ? { trimStart, trimEnd } : {}),
       });
 
       setSounds((prev) => [newSound, ...prev.filter((item) => item.id !== newSound.id)]);
