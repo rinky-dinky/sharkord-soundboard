@@ -129,7 +129,8 @@ const loadSounds = async (pluginPath: string): Promise<TSoundEntry[]> => {
         typeof entry.mimeType === 'string' &&
         typeof entry.localPath === 'string' &&
         typeof entry.createdByUserId === 'number' &&
-        typeof entry.createdAt === 'number'
+        typeof entry.createdAt === 'number' &&
+        (entry.volume === undefined || typeof entry.volume === 'number')
     );
   } catch {
     return [];
@@ -609,7 +610,8 @@ const onLoad = async (ctx: PluginContext) => {
         mimeType,
         localPath,
         createdByUserId: invokerCtx.userId,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        ...(payload.volume !== undefined && payload.volume !== 1.0 ? { volume: payload.volume } : {}),
       };
 
       sounds.push(newEntry);
@@ -640,7 +642,7 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'update_sound',
-    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string; name: string; emoji: string }) {
+    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string; name: string; emoji: string; volume?: number }) {
       const name = payload.name.trim();
       const emoji = payload.emoji.trim();
       if (!name) throw new Error('Sound name is required.');
@@ -650,7 +652,9 @@ const onLoad = async (ctx: PluginContext) => {
       const idx = sounds.findIndex((entry) => entry.id === payload.soundId);
       if (idx === -1) throw new Error('Sound not found.');
 
-      sounds[idx] = { ...sounds[idx], name, emoji };
+      const update: Partial<TSoundEntry> = { name, emoji };
+      if (payload.volume !== undefined) update.volume = payload.volume;
+      sounds[idx] = { ...sounds[idx], ...update };
       await saveSounds(ctx.path, sounds);
 
       const { localPath: _localPath, ...updated } = sounds[idx];
@@ -803,10 +807,14 @@ const onLoad = async (ctx: PluginContext) => {
         if (!activePlaybacks.has(playbackId)) return { ok: true };
       }
 
+      const volumeGain = sound.volume ?? 1.0;
+      const volumeArgs = volumeGain !== 1.0 ? ['-af', `volume=${volumeGain}`] : [];
+
       const ffmpeg = spawn(ffmpegBinaryPath, [
         '-re',
         '-i', sound.localPath,
         '-vn',
+        ...volumeArgs,
         '-ac', '2',
         '-ar', '48000',
         '-c:a', 'libopus',

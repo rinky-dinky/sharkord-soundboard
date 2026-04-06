@@ -289,6 +289,342 @@ const EmojiPicker = ({
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Audio helpers
+// ---------------------------------------------------------------------------
+
+const formatTime = (seconds: number): string => {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+};
+
+const parseTime = (str: string): number | null => {
+  const match = str.trim().match(/^(\d+):([0-5]?\d(?:\.\d*)?)$/);
+  if (!match) return null;
+  const mins = parseInt(match[1], 10);
+  const secs = parseFloat(match[2]);
+  if (secs >= 60) return null;
+  return mins * 60 + secs;
+};
+
+const writeWavString = (view: DataView, offset: number, str: string): void => {
+  for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+};
+
+const encodeWAV = (buffer: AudioBuffer): ArrayBuffer => {
+  const numChannels = Math.min(buffer.numberOfChannels, 2);
+  const sampleRate = buffer.sampleRate;
+  const numSamples = buffer.length;
+  const dataSize = numSamples * numChannels * 2;
+  const ab = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(ab);
+  writeWavString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeWavString(view, 8, 'WAVE');
+  writeWavString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * 2, true);
+  view.setUint16(32, numChannels * 2, true);
+  view.setUint16(34, 16, true);
+  writeWavString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+  const channels: Float32Array[] = [];
+  for (let ch = 0; ch < numChannels; ch++) channels.push(buffer.getChannelData(ch));
+  let offset = 44;
+  for (let i = 0; i < numSamples; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const s = Math.max(-1, Math.min(1, channels[ch][i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return ab;
+};
+
+// ---------------------------------------------------------------------------
+// WaveformEditor: canvas waveform with draggable trim handles
+// ---------------------------------------------------------------------------
+
+const WAVEFORM_PEAKS = 200;
+
+const WaveformEditor = ({
+  peaks,
+  duration,
+  trimStart,
+  trimEnd,
+  onTrimStartChange,
+  onTrimEndChange,
+}: {
+  peaks: number[];
+  duration: number;
+  trimStart: number;
+  trimEnd: number;
+  onTrimStartChange: (t: number) => void;
+  onTrimEndChange: (t: number) => void;
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Keep latest props accessible inside imperative mouse handlers
+  const liveRef = useRef({ trimStart, trimEnd, duration, onTrimStartChange, onTrimEndChange });
+  useEffect(() => {
+    liveRef.current = { trimStart, trimEnd, duration, onTrimStartChange, onTrimEndChange };
+  });
+
+  // Redraw whenever peaks or trim positions change
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || peaks.length === 0 || duration <= 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const startX = (trimStart / duration) * W;
+    const endX = (trimEnd / duration) * W;
+    const barW = W / peaks.length;
+    for (let i = 0; i < peaks.length; i++) {
+      const x = i * barW;
+      const barH = peaks[i] * H * 0.85;
+      const y = (H - barH) / 2;
+      const midX = x + barW / 2;
+      ctx.fillStyle = midX >= startX && midX <= endX
+        ? 'rgba(96,165,250,0.85)'
+        : 'rgba(96,165,250,0.25)';
+      ctx.fillRect(x + 0.5, y, Math.max(1, barW - 1), barH);
+    }
+    // Marker lines
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillRect(startX - 1, 0, 2, H);
+    ctx.fillRect(endX - 1, 0, 2, H);
+  }, [peaks, duration, trimStart, trimEnd]);
+
+  const getTimeAt = (clientX: number): number => {
+    const el = containerRef.current;
+    if (!el || liveRef.current.duration <= 0) return 0;
+    const rect = el.getBoundingClientRect();
+    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+    return (x / rect.width) * liveRef.current.duration;
+  };
+
+  const startDrag = (handle: 'start' | 'end') => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const t = getTimeAt(ev.clientX);
+      const { trimStart: ts, trimEnd: te, duration: dur, onTrimStartChange: onS, onTrimEndChange: onE } = liveRef.current;
+      if (handle === 'start') onS(Math.max(0, Math.min(t, te - 0.05)));
+      else onE(Math.min(dur, Math.max(t, ts + 0.05)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const startPct = duration > 0 ? (trimStart / duration) * 100 : 0;
+  const endPct = duration > 0 ? (trimEnd / duration) * 100 : 100;
+
+  return (
+    <div ref={containerRef} className="relative w-full rounded overflow-hidden select-none" style={{ height: 64 }}>
+      <canvas
+        ref={canvasRef}
+        width={600}
+        height={64}
+        className="block w-full bg-black/10"
+        style={{ height: 64 }}
+      />
+      {/* Dimmed regions outside trim */}
+      <div className="absolute inset-y-0 left-0 bg-black/35 pointer-events-none" style={{ width: `${startPct}%` }} />
+      <div className="absolute inset-y-0 right-0 bg-black/35 pointer-events-none" style={{ width: `${100 - endPct}%` }} />
+      {/* Start handle */}
+      <div
+        className="absolute inset-y-0 flex items-center justify-center cursor-ew-resize z-10"
+        style={{ left: `${startPct}%`, transform: 'translateX(-50%)', width: 16 }}
+        onMouseDown={startDrag('start')}
+      >
+        <div className="absolute inset-y-0" style={{ left: '50%', width: 2, background: 'rgba(255,255,255,0.9)', transform: 'translateX(-50%)' }} />
+        <div className="relative w-3 h-3 rounded-full bg-white shadow border border-gray-300" />
+      </div>
+      {/* End handle */}
+      <div
+        className="absolute inset-y-0 flex items-center justify-center cursor-ew-resize z-10"
+        style={{ left: `${endPct}%`, transform: 'translateX(-50%)', width: 16 }}
+        onMouseDown={startDrag('end')}
+      >
+        <div className="absolute inset-y-0" style={{ left: '50%', width: 2, background: 'rgba(255,255,255,0.9)', transform: 'translateX(-50%)' }} />
+        <div className="relative w-3 h-3 rounded-full bg-white shadow border border-gray-300" />
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// AudioTrimmer: decodes audio, renders waveform, time inputs, volume slider
+// ---------------------------------------------------------------------------
+
+const AudioTrimmer = ({
+  file,
+  trimStart,
+  trimEnd,
+  volume,
+  onTrimStartChange,
+  onTrimEndChange,
+  onVolumeChange,
+  onReady,
+}: {
+  file: File;
+  trimStart: number;
+  trimEnd: number;
+  volume: number;
+  onTrimStartChange: (t: number) => void;
+  onTrimEndChange: (t: number) => void;
+  onVolumeChange: (v: number) => void;
+  onReady: (duration: number, buffer: AudioBuffer) => void;
+}) => {
+  const [peaks, setPeaks] = useState<number[]>([]);
+  const [duration, setDuration] = useState(0);
+  const [decoding, setDecoding] = useState(true);
+  const onReadyRef = useRef(onReady);
+  useEffect(() => { onReadyRef.current = onReady; });
+
+  // Local string values for the time inputs (allows free typing)
+  const [startStr, setStartStr] = useState('0:00.0');
+  const [endStr, setEndStr] = useState('0:00.0');
+  const startFocused = useRef(false);
+  const endFocused = useRef(false);
+  useEffect(() => { if (!startFocused.current) setStartStr(formatTime(trimStart)); }, [trimStart]);
+  useEffect(() => { if (!endFocused.current) setEndStr(formatTime(trimEnd)); }, [trimEnd]);
+
+  // Decode the audio file and generate waveform peaks
+  useEffect(() => {
+    let cancelled = false;
+    setDecoding(true);
+    setPeaks([]);
+    setDuration(0);
+
+    (async () => {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        if (cancelled) return;
+        const audioCtx = new AudioContext();
+        let audioBuffer: AudioBuffer;
+        try {
+          audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        } finally {
+          await audioCtx.close();
+        }
+        if (cancelled) return;
+
+        const dur = audioBuffer.duration;
+        setDuration(dur);
+        onReadyRef.current(dur, audioBuffer);
+
+        // Sample peaks from the first channel
+        const data = audioBuffer.getChannelData(0);
+        const blockSize = Math.floor(data.length / WAVEFORM_PEAKS);
+        const rawPeaks: number[] = [];
+        for (let i = 0; i < WAVEFORM_PEAKS; i++) {
+          let max = 0;
+          const base = i * blockSize;
+          for (let j = 0; j < blockSize; j++) {
+            const v = Math.abs(data[base + j]);
+            if (v > max) max = v;
+          }
+          rawPeaks.push(max);
+        }
+        const maxPeak = Math.max(...rawPeaks, 0.0001);
+        if (!cancelled) setPeaks(rawPeaks.map((p) => p / maxPeak));
+      } catch {
+        // If decoding fails just show nothing
+      } finally {
+        if (!cancelled) setDecoding(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [file]);
+
+  const commitStart = (str: string) => {
+    const t = parseTime(str);
+    if (t !== null) onTrimStartChange(Math.max(0, Math.min(t, trimEnd - 0.05)));
+    else setStartStr(formatTime(trimStart));
+  };
+
+  const commitEnd = (str: string) => {
+    const t = parseTime(str);
+    if (t !== null) onTrimEndChange(Math.min(duration, Math.max(t, trimStart + 0.05)));
+    else setEndStr(formatTime(trimEnd));
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {decoding ? (
+        <div className="h-16 rounded flex items-center justify-center bg-black/10 text-xs opacity-50">
+          Loading waveform…
+        </div>
+      ) : peaks.length > 0 ? (
+        <WaveformEditor
+          peaks={peaks}
+          duration={duration}
+          trimStart={trimStart}
+          trimEnd={trimEnd}
+          onTrimStartChange={onTrimStartChange}
+          onTrimEndChange={onTrimEndChange}
+        />
+      ) : (
+        <div className="h-16 rounded flex items-center justify-center bg-black/10 text-xs opacity-40">
+          Could not load waveform
+        </div>
+      )}
+
+      {/* Time inputs */}
+      <div className="flex items-center gap-2 text-xs">
+        <span className="opacity-60 shrink-0">Start</span>
+        <input
+          value={startStr}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setStartStr(e.target.value)}
+          onFocus={() => { startFocused.current = true; }}
+          onBlur={() => { startFocused.current = false; commitStart(startStr); }}
+          onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+          className="w-16 rounded border bg-transparent px-1.5 py-0.5 font-mono text-center"
+        />
+        <div className="flex-1 h-px opacity-20 bg-current" />
+        <span className="opacity-60 shrink-0">End</span>
+        <input
+          value={endStr}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEndStr(e.target.value)}
+          onFocus={() => { endFocused.current = true; }}
+          onBlur={() => { endFocused.current = false; commitEnd(endStr); }}
+          onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+          className="w-16 rounded border bg-transparent px-1.5 py-0.5 font-mono text-center"
+        />
+      </div>
+
+      {/* Volume slider */}
+      <div className="flex items-center gap-2 text-xs">
+        <span className="opacity-60 shrink-0">Volume</span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={volume}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onVolumeChange(Number(e.target.value))}
+          className="flex-1"
+          style={{ accentColor: 'rgba(96,165,250,0.9)' }}
+        />
+        <span className="w-8 text-right font-mono opacity-80">{volume}%</span>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+
 const useSharkordStore = () => {
   const store = window.__SHARKORD_STORE__;
   const [state, setState] = useState(() => store.getState());
@@ -408,6 +744,12 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playingSoundIds, setPlayingSoundIds] = useState<Set<string>>(new Set());
+  // Trim / volume state for the Add Sound form
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [volume, setVolume] = useState(100);
+  const audioBufferRef = useRef<AudioBuffer | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const playingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onPlayingChangeRef = useRef(onPlayingChange);
@@ -487,6 +829,11 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
       setName('');
       setEmoji('🦈');
       setFile(null);
+      setTrimStart(0);
+      setTrimEnd(0);
+      setAudioDuration(0);
+      setVolume(100);
+      audioBufferRef.current = null;
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }, [isAddingSound]);
@@ -496,20 +843,61 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
     setLoading(true);
     setError(null);
     try {
-      const fileData = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => { resolve((reader.result as string).split(',')[1] ?? ''); };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      let fileData: string;
+      let mimeType: string;
+
+      const buffer = audioBufferRef.current;
+      const needsTrim = buffer !== null && audioDuration > 0 &&
+        (trimStart > 0.01 || trimEnd < audioDuration - 0.01);
+
+      if (needsTrim && buffer) {
+        const trimDuration = trimEnd - trimStart;
+        const offlineCtx = new OfflineAudioContext(
+          Math.min(buffer.numberOfChannels, 2),
+          Math.ceil(buffer.sampleRate * trimDuration),
+          buffer.sampleRate
+        );
+        const source = offlineCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(offlineCtx.destination);
+        source.start(0, trimStart, trimDuration);
+        const rendered = await offlineCtx.startRendering();
+        const wavBuffer = encodeWAV(rendered);
+        const bytes = new Uint8Array(wavBuffer);
+        // Convert to base64 in chunks to avoid call-stack overflow on large files
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        fileData = btoa(binary);
+        mimeType = 'audio/wav';
+      } else {
+        fileData = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => { resolve((reader.result as string).split(',')[1] ?? ''); };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        mimeType = file.type || 'audio/mpeg';
+      }
 
       const newSound = await executePluginAction<TSoundInfo>('upload_sound', {
-        name, emoji, fileData, mimeType: file.type || 'audio/mpeg'
+        name,
+        emoji,
+        fileData,
+        mimeType,
+        ...(volume !== 100 ? { volume: volume / 100 } : {}),
       });
 
       setSounds((prev) => [newSound, ...prev.filter((item) => item.id !== newSound.id)]);
       setFile(null);
       setName('');
+      setTrimStart(0);
+      setTrimEnd(0);
+      setAudioDuration(0);
+      setVolume(100);
+      audioBufferRef.current = null;
       if (fileInputRef.current) fileInputRef.current.value = '';
       onAddSoundDone();
     } catch (e) {
@@ -517,7 +905,7 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
     } finally {
       setLoading(false);
     }
-  }, [emoji, executePluginAction, file, name, onAddSoundDone]);
+  }, [emoji, executePluginAction, file, name, onAddSoundDone, trimStart, trimEnd, audioDuration, volume]);
 
   const restartPoll = useCallback(() => {
     if (playingPollRef.current !== null) clearInterval(playingPollRef.current);
@@ -646,18 +1034,44 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
             ref={fileInputRef}
             type="file"
             accept="audio/*"
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              const f = e.target.files?.[0] ?? null;
+              setFile(f);
+              if (!f) {
+                setTrimStart(0);
+                setTrimEnd(0);
+                setAudioDuration(0);
+                audioBufferRef.current = null;
+              }
+            }}
             className="sr-only"
           />
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="rounded border px-2 py-1 text-sm hover:bg-accent"
+            className="rounded border px-2 py-1 text-sm hover:bg-accent truncate"
           >
-            Upload file
+            {file ? file.name : 'Upload file'}
           </button>
           {file ? (
-            <p className="text-xs opacity-60 truncate">{file.name} ({(file.size / 1024).toFixed(1)} KB)</p>
+            <>
+              <p className="text-xs opacity-50">{(file.size / 1024).toFixed(1)} KB</p>
+              <AudioTrimmer
+                file={file}
+                trimStart={trimStart}
+                trimEnd={trimEnd}
+                volume={volume}
+                onTrimStartChange={setTrimStart}
+                onTrimEndChange={setTrimEnd}
+                onVolumeChange={setVolume}
+                onReady={(dur, buf) => {
+                  setAudioDuration(dur);
+                  audioBufferRef.current = buf;
+                  setTrimStart(0);
+                  setTrimEnd(dur);
+                }}
+              />
+            </>
           ) : null}
           <button
             type="button"
