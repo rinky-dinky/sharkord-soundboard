@@ -17,7 +17,7 @@ Automatic installation:
 
 Manual installation:
 
-1. Download the latest `sharkord-soundboard-0.0.5.tar.gz` from the [Releases](https://github.com/rinky-dinky/sharkord-soundboard/releases) page.
+1. Download the latest `sharkord-soundboard-0.0.6.tar.gz` from the [Releases](https://github.com/rinky-dinky/sharkord-soundboard/releases) page.
 2. Extract it into your Sharkord plugins folder.
 
 ## Add a sound to the soundboard
@@ -28,7 +28,16 @@ Manual installation:
    - **Sound name**
    - **Emoji**
    - **Audio file**
-4. Click **Add**.
+4. Trim audio and adjust volume (optional)
+5. Click **Add**.
+
+## Edit sounds
+
+1. Click the pencil icon in the UI.
+2. Select the sound you'd like to modify.
+3. Edit the name/emoji/volume/audio and click save.
+
+To delete a sound, double-click the trashcan icon.
 
 ## Play sounds
 
@@ -45,6 +54,7 @@ Or use the `/stop_sounds` command.
 ## Screenshots
 
 <img align="center" width="377" height="447" alt="image" src="https://github.com/user-attachments/assets/e818d187-4ccb-4bb1-b047-b3cae8496474" />
+<img align="center" width="349" height="252" alt="image" src="https://github.com/user-attachments/assets/8b98be49-2721-45ac-a334-3fbb1107d78a" />
 
 
 
