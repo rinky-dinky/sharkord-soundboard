@@ -11,11 +11,13 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard
 
 ## Install
 
-Automatic installation:
+### Automatic installation:
+
+> NOTE: Currently 2 versions behind latest
 
 1. In the Sharkord plugin marketplace, locate "SoundDrop" and click Install.
 
-Manual installation:
+### Manual installation:
 
 1. Download the latest `sharkord-soundboard-0.0.6.tar.gz` from the [Releases](https://github.com/rinky-dinky/sharkord-soundboard/releases) page.
 2. Extract it into your Sharkord plugins folder.
