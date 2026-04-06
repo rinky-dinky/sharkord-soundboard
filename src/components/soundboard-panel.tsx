@@ -489,8 +489,63 @@ const AudioTrimmer = ({
   const [peaks, setPeaks] = useState<number[]>([]);
   const [duration, setDuration] = useState(0);
   const [decoding, setDecoding] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
   const onReadyRef = useRef(onReady);
   useEffect(() => { onReadyRef.current = onReady; });
+
+  // Hold the decoded buffer so preview can use it without re-decoding
+  const decodedBufferRef = useRef<AudioBuffer | null>(null);
+  // Hold the active preview AudioContext + source so we can stop them
+  const previewCtxRef = useRef<AudioContext | null>(null);
+  const previewSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
+  const stopPreview = useCallback(() => {
+    if (previewSourceRef.current) {
+      try { previewSourceRef.current.stop(); } catch { /* already stopped */ }
+      previewSourceRef.current = null;
+    }
+    if (previewCtxRef.current) {
+      previewCtxRef.current.close().catch(() => {});
+      previewCtxRef.current = null;
+    }
+    setIsPlaying(false);
+  }, []);
+
+  // Stop preview whenever the trim window or volume changes so the user
+  // always hears the latest settings when they click preview again.
+  useEffect(() => { stopPreview(); }, [trimStart, trimEnd, volume, stopPreview]);
+  // Stop and clean up when the component unmounts or file changes.
+  useEffect(() => () => stopPreview(), [file, stopPreview]);
+
+  const playPreview = useCallback(() => {
+    const buf = decodedBufferRef.current;
+    if (!buf) return;
+    stopPreview();
+
+    const ctx = new AudioContext();
+    const source = ctx.createBufferSource();
+    source.buffer = buf;
+
+    const gain = ctx.createGain();
+    gain.gain.value = volume / 100;
+
+    source.connect(gain);
+    gain.connect(ctx.destination);
+
+    const trimDuration = trimEnd - trimStart;
+    source.start(0, trimStart, trimDuration);
+
+    source.onended = () => {
+      ctx.close().catch(() => {});
+      previewCtxRef.current = null;
+      previewSourceRef.current = null;
+      setIsPlaying(false);
+    };
+
+    previewCtxRef.current = ctx;
+    previewSourceRef.current = source;
+    setIsPlaying(true);
+  }, [trimStart, trimEnd, volume, stopPreview]);
 
   // Local string values for the time inputs (allows free typing)
   const [startStr, setStartStr] = useState('0:00.0');
@@ -506,6 +561,7 @@ const AudioTrimmer = ({
     setDecoding(true);
     setPeaks([]);
     setDuration(0);
+    decodedBufferRef.current = null;
 
     (async () => {
       try {
@@ -520,6 +576,7 @@ const AudioTrimmer = ({
         }
         if (cancelled) return;
 
+        decodedBufferRef.current = audioBuffer;
         const dur = audioBuffer.duration;
         setDuration(dur);
         onReadyRef.current(dur, audioBuffer);
@@ -582,7 +639,7 @@ const AudioTrimmer = ({
         </div>
       )}
 
-      {/* Time inputs */}
+      {/* Time inputs + preview button */}
       <div className="flex items-center gap-2 text-xs">
         <span className="opacity-60 shrink-0">Start</span>
         <input
@@ -593,7 +650,28 @@ const AudioTrimmer = ({
           onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
           className="w-16 rounded border bg-transparent px-1.5 py-0.5 font-mono text-center"
         />
-        <div className="flex-1 h-px opacity-20 bg-current" />
+        <div className="flex-1 flex justify-center">
+          <button
+            type="button"
+            disabled={decoding || !decodedBufferRef.current}
+            onClick={isPlaying ? stopPreview : playPreview}
+            title={isPlaying ? 'Stop preview' : 'Preview trimmed audio'}
+            className="flex items-center gap-1 rounded border px-2 py-0.5 hover:bg-accent disabled:opacity-40"
+          >
+            {isPlaying ? (
+              // Stop square
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                <rect x="1" y="1" width="8" height="8" rx="1" />
+              </svg>
+            ) : (
+              // Play triangle
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                <polygon points="2,1 9,5 2,9" />
+              </svg>
+            )}
+            <span>{isPlaying ? 'Stop' : 'Preview'}</span>
+          </button>
+        </div>
         <span className="opacity-60 shrink-0">End</span>
         <input
           value={endStr}
