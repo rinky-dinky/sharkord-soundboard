@@ -356,7 +356,6 @@ const WaveformEditor = ({
   duration,
   trimStart,
   trimEnd,
-  playheadRef,
   onTrimStartChange,
   onTrimEndChange,
 }: {
@@ -364,7 +363,6 @@ const WaveformEditor = ({
   duration: number;
   trimStart: number;
   trimEnd: number;
-  playheadRef: React.RefObject<HTMLDivElement | null>;
   onTrimStartChange: (t: number) => void;
   onTrimEndChange: (t: number) => void;
 }) => {
@@ -461,12 +459,6 @@ const WaveformEditor = ({
         <div className="absolute inset-y-0" style={{ left: '50%', width: 2, background: 'rgba(255,255,255,0.9)', transform: 'translateX(-50%)' }} />
         <div className="relative w-3 h-3 rounded-full bg-white shadow border border-gray-300" />
       </div>
-      {/* Playhead — hidden by default, shown/moved imperatively via playheadRef */}
-      <div
-        ref={playheadRef}
-        className="absolute inset-y-0 w-0.5 pointer-events-none z-20"
-        style={{ display: 'none', left: '0%', transform: 'translateX(-50%)', background: 'rgba(255,255,255,0.9)', boxShadow: '0 0 4px rgba(255,255,255,0.6)' }}
-      />
     </div>
   );
 };
@@ -666,15 +658,34 @@ const AudioTrimmer = ({
           Loading waveform…
         </div>
       ) : peaks.length > 0 ? (
-        <WaveformEditor
-          peaks={peaks}
-          duration={duration}
-          trimStart={trimStart}
-          trimEnd={trimEnd}
-          playheadRef={playheadRef}
-          onTrimStartChange={onTrimStartChange}
-          onTrimEndChange={onTrimEndChange}
-        />
+        <div className="relative" style={{ height: 64 }}>
+          <WaveformEditor
+            peaks={peaks}
+            duration={duration}
+            trimStart={trimStart}
+            trimEnd={trimEnd}
+            onTrimStartChange={onTrimStartChange}
+            onTrimEndChange={onTrimEndChange}
+          />
+          {/* Playhead: sibling of WaveformEditor so it isn't clipped by it,
+              positioned absolutely within this wrapper, moved via ref in rAF */}
+          <div
+            ref={playheadRef}
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              width: 2,
+              display: 'none',
+              left: '0%',
+              transform: 'translateX(-50%)',
+              background: 'rgba(255,255,255,0.95)',
+              boxShadow: '0 0 4px rgba(255,255,255,0.7)',
+              pointerEvents: 'none',
+              zIndex: 30,
+            }}
+          />
+        </div>
       ) : (
         <div className="h-16 rounded flex items-center justify-center bg-black/10 text-xs opacity-40">
           Could not load waveform
