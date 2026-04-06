@@ -412,6 +412,7 @@ const WaveformEditor = ({
 
   const startDrag = (handle: 'start' | 'end') => (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation(); // prevent waveform scrub handler from also firing
     const onMove = (ev: MouseEvent) => {
       const t = getTimeAt(ev.clientX);
       const { trimStart: ts, trimEnd: te, duration: dur, onTrimStartChange: onS, onTrimEndChange: onE } = liveRef.current;
@@ -503,12 +504,26 @@ const AudioTrimmer = ({
   // triggering React re-renders on every animation frame.
   const playheadRef = useRef<HTMLDivElement | null>(null);
 
-  const stopPreview = useCallback(() => {
+  // Ref-based isPlaying flag so imperative handlers read the latest value
+  // without needing to be recreated on every state change.
+  const isPlayingRef = useRef(false);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+
+  // Ref to the waveform wrapper div — used to calculate scrub position.
+  const waveformWrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // --- Shared playback-start logic -----------------------------------
+  // Starts (or restarts) audio from `fromTime` (seconds into the buffer).
+  // Cancels any in-flight rAF/source before starting fresh.
+  const startPlaybackFrom = useCallback((fromTime: number) => {
+    const buf = decodedBufferRef.current;
+    if (!buf) return;
+
+    // Tear down existing playback without touching isPlaying yet.
     if (animFrameRef.current !== null) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
     }
-    if (playheadRef.current) playheadRef.current.style.display = 'none';
     if (previewSourceRef.current) {
       try { previewSourceRef.current.stop(); } catch { /* already stopped */ }
       previewSourceRef.current = null;
@@ -517,49 +532,29 @@ const AudioTrimmer = ({
       previewCtxRef.current.close().catch(() => {});
       previewCtxRef.current = null;
     }
-    setIsPlaying(false);
-  }, []);
 
-  // Stop preview whenever the trim window or volume changes so the user
-  // always hears the latest settings when they click preview again.
-  useEffect(() => { stopPreview(); }, [trimStart, trimEnd, volume, stopPreview]);
-  // Stop and clean up when the component unmounts or file changes.
-  useEffect(() => () => stopPreview(), [file, stopPreview]);
-
-  const playPreview = useCallback(() => {
-    const buf = decodedBufferRef.current;
-    if (!buf) return;
-    stopPreview();
-
+    const clamped = Math.max(trimStart, Math.min(fromTime, trimEnd - 0.05));
     const ctx = new AudioContext();
     const source = ctx.createBufferSource();
     source.buffer = buf;
-
     const gain = ctx.createGain();
     gain.gain.value = volume / 100;
-
     source.connect(gain);
     gain.connect(ctx.destination);
+    source.start(0, clamped, trimEnd - clamped);
 
-    const trimDuration = trimEnd - trimStart;
-    source.start(0, trimStart, trimDuration);
-
-    // Move the playhead div directly — no React state, no re-renders.
+    // Animate playhead directly via DOM — no React re-renders.
     const startedAt = ctx.currentTime;
     const fullDuration = buf.duration;
     const tick = () => {
-      const pos = trimStart + (ctx.currentTime - startedAt);
+      const pos = clamped + (ctx.currentTime - startedAt);
       const pct = Math.min(pos, trimEnd) / fullDuration;
       const el = playheadRef.current;
       if (el) {
         el.style.display = 'block';
         el.style.left = `${pct * 100}%`;
       }
-      if (pos < trimEnd) {
-        animFrameRef.current = requestAnimationFrame(tick);
-      } else {
-        animFrameRef.current = null;
-      }
+      animFrameRef.current = pos < trimEnd ? requestAnimationFrame(tick) : null;
     };
     animFrameRef.current = requestAnimationFrame(tick);
 
@@ -578,7 +573,78 @@ const AudioTrimmer = ({
     previewCtxRef.current = ctx;
     previewSourceRef.current = source;
     setIsPlaying(true);
-  }, [trimStart, trimEnd, volume, stopPreview]);
+  }, [trimStart, trimEnd, volume]);
+
+  const stopPreview = useCallback(() => {
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (playheadRef.current) playheadRef.current.style.display = 'none';
+    if (previewSourceRef.current) {
+      try { previewSourceRef.current.stop(); } catch { /* already stopped */ }
+      previewSourceRef.current = null;
+    }
+    if (previewCtxRef.current) {
+      previewCtxRef.current.close().catch(() => {});
+      previewCtxRef.current = null;
+    }
+    setIsPlaying(false);
+  }, []);
+
+  // Stop preview whenever the trim window or volume changes.
+  useEffect(() => { stopPreview(); }, [trimStart, trimEnd, volume, stopPreview]);
+  // Stop and clean up when the component unmounts or file changes.
+  useEffect(() => () => stopPreview(), [file, stopPreview]);
+
+  const playPreview = useCallback(() => {
+    if (!decodedBufferRef.current) return;
+    stopPreview();
+    startPlaybackFrom(trimStart);
+  }, [trimStart, stopPreview, startPlaybackFrom]);
+
+  // --- Waveform scrubbing -------------------------------------------
+  // Clicking or dragging on the waveform seeks to that position.
+  // While dragging the playhead moves visually; audio restarts on mouse-up.
+  const handleWaveformMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isPlayingRef.current && !decodedBufferRef.current) return;
+    const buf = decodedBufferRef.current;
+    if (!buf) return;
+
+    const wrapper = waveformWrapperRef.current;
+    if (!wrapper) return;
+
+    const getTime = (clientX: number) => {
+      const rect = wrapper.getBoundingClientRect();
+      const pct = Math.max(0, Math.min((clientX - rect.left) / rect.width, 1));
+      return Math.max(trimStart, Math.min(pct * buf.duration, trimEnd));
+    };
+
+    // Move playhead visually on every mousemove without restarting audio.
+    const onMouseMove = (ev: MouseEvent) => {
+      const t = getTime(ev.clientX);
+      const el = playheadRef.current;
+      if (el) {
+        el.style.display = 'block';
+        el.style.left = `${(t / buf.duration) * 100}%`;
+      }
+    };
+
+    // On mouse-up: restart audio from the final scrub position.
+    const onMouseUp = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      if (isPlayingRef.current) {
+        startPlaybackFrom(getTime(ev.clientX));
+      }
+    };
+
+    // Seek immediately on click too.
+    if (isPlayingRef.current) startPlaybackFrom(getTime(e.clientX));
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, [trimStart, trimEnd, startPlaybackFrom]);
 
   // Local string values for the time inputs (allows free typing)
   const [startStr, setStartStr] = useState('0:00.0');
@@ -658,7 +724,12 @@ const AudioTrimmer = ({
           Loading waveform…
         </div>
       ) : peaks.length > 0 ? (
-        <div className="relative" style={{ height: 64 }}>
+        <div
+          ref={waveformWrapperRef}
+          className="relative"
+          style={{ height: 64, cursor: isPlaying ? 'col-resize' : 'default' }}
+          onMouseDown={handleWaveformMouseDown}
+        >
           <WaveformEditor
             peaks={peaks}
             duration={duration}
@@ -667,8 +738,8 @@ const AudioTrimmer = ({
             onTrimStartChange={onTrimStartChange}
             onTrimEndChange={onTrimEndChange}
           />
-          {/* Playhead: sibling of WaveformEditor so it isn't clipped by it,
-              positioned absolutely within this wrapper, moved via ref in rAF */}
+          {/* Playhead — positioned as a sibling so WaveformEditor's overflow:hidden
+              doesn't clip it; moved imperatively via ref in the rAF loop */}
           <div
             ref={playheadRef}
             style={{
