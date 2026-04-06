@@ -727,7 +727,7 @@ const AudioTrimmer = ({
         <div
           ref={waveformWrapperRef}
           className="relative"
-          style={{ height: 64, cursor: isPlaying ? 'col-resize' : 'default' }}
+          style={{ height: 64 }}
           onMouseDown={handleWaveformMouseDown}
         >
           <WaveformEditor
