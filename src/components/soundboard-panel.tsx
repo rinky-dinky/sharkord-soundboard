@@ -534,14 +534,14 @@ const EmojiPicker = ({
               <button
                 type="button"
                 onClick={() => setTab('native')}
-                className={`flex-1 py-1.5 hover:bg-accent ${tab === 'native' ? 'font-semibold' : 'opacity-60'}`}
+                className={`sounddrop-picker-tab flex-1 py-1.5 ${tab === 'native' ? 'sounddrop-picker-tab-active font-semibold' : 'opacity-60'}`}
               >
                 Emoji
               </button>
               <button
                 type="button"
                 onClick={() => setTab('custom')}
-                className={`flex-1 py-1.5 hover:bg-accent ${tab === 'custom' ? 'font-semibold' : 'opacity-60'}`}
+                className={`sounddrop-picker-tab flex-1 py-1.5 ${tab === 'custom' ? 'sounddrop-picker-tab-active font-semibold' : 'opacity-60'}`}
               >
                 Custom
               </button>
@@ -1410,6 +1410,26 @@ const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingCh
       }
       .sounddrop-picker-dropdown .sounddrop-picker-search:focus {
         border-color: rgba(128,128,128,0.55) !important;
+      }
+      .sounddrop-picker-dropdown {
+        background: var(--background, #1e1e1e) !important;
+        background-color: var(--background, #1e1e1e) !important;
+      }
+      .sounddrop-picker-dropdown button:hover {
+        background: rgba(128,128,128,0.28) !important;
+      }
+      .sounddrop-picker-dropdown button.bg-accent,
+      .sounddrop-picker-dropdown .bg-accent {
+        background: rgba(128,128,128,0.38) !important;
+      }
+      .sounddrop-picker-tab {
+        transition: background 150ms ease;
+      }
+      .sounddrop-picker-tab:hover {
+        background: rgba(128,128,128,0.2) !important;
+      }
+      .sounddrop-picker-tab-active {
+        background: rgba(128,128,128,0.18) !important;
       }
     `;
     if (!existing) document.head.appendChild(style);
