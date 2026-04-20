@@ -10,86 +10,132 @@ import type { TListSoundsResponse, TSoundInfo } from '../types';
 //                   (with optional ?accessToken=... query string)
 // ---------------------------------------------------------------------------
 
-// Five pages of 40 emojis each (8 columns × 5 rows per page).
-const NATIVE_EMOJI_PAGES: string[][] = [
-  // Page 1 – Smileys
-  [
-    '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
-    '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
-    '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪',
-    '😝', '🤑', '🤗', '🤭', '🫢', '🫣', '🤫', '🤔',
-    '🫡', '🤐', '🤨', '😐', '😑', '😶', '🫥', '😏',
-  ],
-  // Page 2 – More faces & hands
-  [
-    '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤',
-    '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵',
-    '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓',
-    '😱', '😤', '😡', '🤬', '😈', '👿', '💀', '☠️',
-    '👋', '🤚', '🖐️', '✋', '🤙', '👍', '👎', '👏',
-  ],
-  // Page 3 – Sound, music & entertainment
-  [
-    '🦈', '🔊', '🎵', '🎶', '🎧', '🎤', '📣', '🎚️',
-    '🎸', '🥁', '🎷', '🎺', '🎻', '🪕', '🎹', '🪗',
-    '🎉', '🎊', '🎈', '🎁', '🏆', '🥇', '🎯', '🎮',
-    '🕹️', '🎲', '♟️', '🎪', '🎭', '🎨', '🎬', '🎼',
-    '📻', '📺', '📷', '📸', '🔭', '🔬', '💻', '🖥️',
-  ],
-  // Page 4 – Animals
-  [
-    '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼',
-    '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🙈',
-    '🙉', '🙊', '🐔', '🐧', '🐦', '🦅', '🦆', '🦉',
-    '🐺', '🐴', '🦄', '🐝', '🦋', '🐌', '🐞', '🐜',
-    '🦎', '🐢', '🐍', '🦕', '🦖', '🐳', '🐬', '🐟',
-  ],
-  // Page 5 – Food & symbols
-  [
-    '🍎', '🍊', '🍋', '🍇', '🍓', '🍒', '🍑', '🥝',
-    '🍕', '🍔', '🌮', '🍣', '🍜', '🍦', '🍰', '🎂',
-    '☕', '🍵', '🍺', '🍻', '🥂', '🍷', '🧃', '🥤',
-    '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
-    '💯', '✅', '❌', '⚠️', '🔥', '💥', '⭐', '🌟',
-  ],
-  // Page 6 – Nature & weather
-  [
-    '🌸', '🌺', '🌻', '🌹', '🌷', '🌼', '🌾', '🍀',
-    '🍁', '🍂', '🍃', '🌿', '🌱', '🌲', '🌳', '🌴',
-    '🌵', '☘️', '🍄', '🌊', '🌈', '⛅', '🌤️', '🌧️',
-    '⛈️', '🌩️', '❄️', '☃️', '⛄', '🌬️', '💨', '🌙',
-    '🌑', '🌒', '🌓', '🌔', '🌕', '☀️', '🌝', '🌞',
-  ],
-  // Page 7 – Travel & places
-  [
-    '🚀', '✈️', '🚂', '🚗', '🚕', '🚙', '🚌', '🏎️',
-    '🛸', '🚁', '⛵', '🚢', '🛳️', '🏖️', '🏝️', '🏔️',
-    '🗻', '🌋', '🗼', '🗽', '🏰', '🏯', '🏟️', '🎡',
-    '🎢', '🎠', '🌃', '🌆', '🌇', '🌉', '🌁', '🌐',
-    '🗺️', '🧭', '🏕️', '⛺', '🛖', '🏠', '🏡', '🏢',
-  ],
-  // Page 8 – Objects & tools
-  [
-    '💡', '🔦', '🕯️', '🔑', '🗝️', '🔒', '🔓', '🔨',
-    '⚒️', '🛠️', '⛏️', '🪛', '🪚', '🔧', '🪤', '🧲',
-    '💣', '🧨', '🪓', '🔮', '🪄', '🧿', '💎', '👑',
-    '🎩', '🎓', '👓', '🕶️', '🥽', '💍', '💰', '💵',
-    '🪙', '💳', '📱', '⌨️', '🖱️', '🖨️', '📦', '🧰',
-  ],
-  // Page 9 – Sports & activities
-  [
-    '⚽', '🏀', '🏈', '⚾', '🥎', '🏐', '🏉', '🎾',
-    '🏸', '🏒', '🥊', '🥋', '🏹', '🎣', '🤿', '🎽',
-    '🛹', '🛷', '⛸️', '🥌', '🏂', '🪂', '🏋️', '🤸',
-    '⛹️', '🏇', '🧗', '🏊', '🚣', '🚴', '🥈', '🥉',
-    '🎖️', '🏅', '🎗️', '🏌️', '🧘', '🤺', '🤼', '🤾',
-  ],
+type TEmojiCategory = { name: string; emojis: string[] };
+
+const NATIVE_EMOJI_CATEGORIES: TEmojiCategory[] = [
+  {
+    name: 'Faces',
+    emojis: [
+      '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
+      '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
+      '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪',
+      '😝', '🤑', '🤗', '🤭', '🫢', '🫣', '🤫', '🤔',
+      '🫡', '🤐', '🤨', '😐', '😑', '😶', '🫥', '😏',
+      '🥹', '🥲', '🫠', '🫤', '🥸', '🫨', '🥺',
+      '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤',
+      '😴', '😥', '😢', '😭', '😰', '😨', '😧', '😦',
+      '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶',
+      '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '😱',
+      '😤', '😡', '😠', '🤬', '😈', '👿', '💀', '☠️',
+    ],
+  },
+  {
+    name: 'Hands & Gestures',
+    emojis: [
+      '👋', '🤚', '🖐️', '✋', '🤙', '🫱', '🫲', '🫳',
+      '🫴', '🫵', '🫶', '🤌', '🤏', '✌️', '🤞', '🖖',
+      '🤟', '🤘', '👌', '👐', '🙌', '🤲', '🤜', '🤛',
+      '✊', '👊', '👍', '👎', '👏', '👈', '👉', '👆',
+      '👇', '☝️', '🫰',
+    ],
+  },
+  {
+    name: 'Sound & Music',
+    emojis: [
+      '🦈', '🔊', '🔉', '🔈', '🔇', '🎵', '🎶', '🎧',
+      '🎤', '🎙️', '📣', '📢', '🎚️', '🎛️',
+      '🎸', '🥁', '🎷', '🎺', '🎻', '🪕', '🎹', '🪗',
+      '📻', '🎼',
+    ],
+  },
+  {
+    name: 'Games & Entertainment',
+    emojis: [
+      '🎉', '🎊', '🎈', '🎁', '🏆', '🥇', '🥈', '🥉',
+      '🎯', '🎮', '🕹️', '🎲', '♟️', '🎪', '🎭', '🎨',
+      '🎬', '📺', '📷', '📸', '🔭', '🔬', '💻', '🖥️',
+    ],
+  },
+  {
+    name: 'Animals',
+    emojis: [
+      '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼',
+      '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🙈',
+      '🙉', '🙊', '🦝', '🦦', '🦥', '🦔', '🐿️', '🦡',
+      '🐔', '🐧', '🐦', '🦅', '🦆', '🦉', '🦜', '🦩',
+      '🦢', '🦚', '🕊️', '🐺', '🐴', '🦄', '🦋', '🐝',
+      '🐌', '🐞', '🐜', '🦟', '🕷️', '🦗', '🦎', '🐢',
+      '🐍', '🦕', '🦖', '🐊', '🐉', '🐳', '🐬', '🐟',
+      '🐡', '🐠', '🐙', '🦑', '🦀', '🦞', '🦐', '🦣',
+      '🐘', '🦛', '🦏', '🦒', '🦘', '🦌', '🐻‍❄️',
+    ],
+  },
+  {
+    name: 'Food & Drink',
+    emojis: [
+      '🍎', '🍊', '🍋', '🍇', '🍓', '🍒', '🍑', '🥝',
+      '🍉', '🍌', '🍍', '🥭', '🍐', '🫐', '🍈', '🍏',
+      '🥑', '🌽', '🍕', '🍔', '🌮', '🍣', '🍜', '🍦',
+      '🍰', '🎂', '🧁', '🍩', '🍪', '🍫', '🍬', '🍭',
+      '☕', '🍵', '🍺', '🍻', '🥂', '🍷', '🧃', '🥤',
+    ],
+  },
+  {
+    name: 'Nature & Weather',
+    emojis: [
+      '🌸', '🌺', '🌻', '🌹', '🌷', '🌼', '🌾', '🍀',
+      '🍁', '🍂', '🍃', '🌿', '🌱', '🌲', '🌳', '🌴',
+      '🌵', '☘️', '🍄', '🌊', '🌈', '⛅', '🌤️', '🌧️',
+      '⛈️', '🌩️', '❄️', '☃️', '⛄', '🌬️', '💨', '🌙',
+      '🌑', '🌒', '🌓', '🌔', '🌕', '☀️', '🌝', '🌞',
+    ],
+  },
+  {
+    name: 'Travel & Places',
+    emojis: [
+      '🚀', '✈️', '🚂', '🚗', '🚕', '🚙', '🚌', '🏎️',
+      '🛸', '🚁', '⛵', '🚢', '🛳️', '🏖️', '🏝️', '🏔️',
+      '🗻', '🌋', '🗼', '🗽', '🏰', '🏯', '🏟️', '🎡',
+      '🎢', '🎠', '🌃', '🌆', '🌇', '🌉', '🌁', '🌐',
+      '🗺️', '🧭', '🏕️', '⛺', '🛖', '🏠', '🏡', '🏢',
+    ],
+  },
+  {
+    name: 'Objects & Tools',
+    emojis: [
+      '💡', '🔦', '🕯️', '🔑', '🗝️', '🔒', '🔓', '🔨',
+      '⚒️', '🛠️', '⛏️', '🪛', '🪚', '🔧', '🪤', '🧲',
+      '💣', '🧨', '🪓', '🔮', '🪄', '🧿', '💎', '👑',
+      '🎩', '🎓', '👓', '🕶️', '🥽', '💍', '💰', '💵',
+      '🪙', '💳', '📱', '⌨️', '🖱️', '🖨️', '📦', '🧰',
+    ],
+  },
+  {
+    name: 'Sports',
+    emojis: [
+      '⚽', '🏀', '🏈', '⚾', '🥎', '🏐', '🏉', '🎾',
+      '🏸', '🏒', '🥊', '🥋', '🏹', '🎣', '🤿', '🎽',
+      '🛹', '🛷', '⛸️', '🥌', '🏂', '🪂', '🏋️', '🤸',
+      '⛹️', '🏇', '🧗', '🏊', '🚣', '🚴', '🥈', '🥉',
+      '🎖️', '🏅', '🎗️', '🏌️', '🧘', '🤺', '🤼', '🤾',
+    ],
+  },
+  {
+    name: 'Symbols',
+    emojis: [
+      '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
+      '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖',
+      '💘', '💝', '💯', '✅', '❌', '⚠️', '🔥', '💥',
+      '⭐', '🌟', '✨', '💫', '🔔', '🔕', '📌', '📍',
+      '🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '⚫', '⚪', '🟤',
+    ],
+  },
 ];
 
 // Flat list of every native emoji paired with searchable keywords.
 // Used to filter the picker when the user types in the search box.
 const NATIVE_EMOJI_DATA: Array<[string, string]> = [
-  // Smileys
+  // Faces
   ['😀', 'grinning smile happy face'], ['😃', 'smiley smile big eyes happy'], ['😄', 'smile happy grin face'],
   ['😁', 'grin beaming smile face'], ['😆', 'laughing satisfied smile face'], ['😅', 'sweat smile nervous face'],
   ['🤣', 'rofl rolling floor laugh cry'], ['😂', 'joy laugh cry tears face'],
@@ -104,34 +150,59 @@ const NATIVE_EMOJI_DATA: Array<[string, string]> = [
   ['🤐', 'zipper mouth quiet face'], ['🤨', 'raised eyebrow suspicious face'], ['😐', 'neutral face blank'],
   ['😑', 'expressionless blank face'], ['😶', 'no mouth silent face'], ['🫥', 'dotted line invisible face'],
   ['😏', 'smirk face'],
-  // More faces & hands
+  ['🥹', 'holding back tears emotional face'], ['🥲', 'smiling tear slightly sad face'],
+  ['🫠', 'melting face disappear'], ['🫤', 'diagonal mouth unsure face'],
+  ['🥸', 'disguised face glasses nose'], ['🫨', 'shaking face nervous stressed'], ['🥺', 'pleading puppy eyes face'],
   ['😒', 'unamused face'], ['🙄', 'eye roll face'], ['😬', 'grimacing teeth face'], ['🤥', 'lying pinocchio face'],
   ['😌', 'relieved calm face'], ['😔', 'pensive sad face'], ['😪', 'sleepy tired face'], ['🤤', 'drooling face'],
-  ['😴', 'sleeping zzz face'], ['😷', 'mask sick ill face'], ['🤒', 'thermometer sick fever face'],
+  ['😴', 'sleeping zzz face'], ['😥', 'sad relieved sweat face'], ['😢', 'crying tear sad face'],
+  ['😭', 'loudly crying sob face'], ['😰', 'anxious sweat nervous face'], ['😨', 'fearful scared face'],
+  ['😧', 'anguished surprised face'], ['😦', 'frowning open mouth sad face'],
+  ['😷', 'mask sick ill face'], ['🤒', 'thermometer sick fever face'],
   ['🤕', 'bandage hurt injured face'], ['🤢', 'nauseated sick green face'], ['🤮', 'vomit sick face'],
   ['🤧', 'sneezing cold face'], ['🥵', 'hot flushed face'], ['🥶', 'cold frozen face'],
   ['🥴', 'woozy drunk dizzy face'], ['😵', 'dizzy spiral face'], ['🤯', 'exploding mind blown face'],
   ['🤠', 'cowboy hat face'], ['🥳', 'party celebrate face'], ['😎', 'cool sunglasses face'], ['🤓', 'nerd glasses face'],
-  ['😱', 'scream scared fear face'], ['😤', 'steam angry frustrated face'], ['😡', 'angry mad red face'],
-  ['🤬', 'rage swearing cursing angry face'], ['😈', 'devil smiling evil face'], ['👿', 'devil angry imp face'],
+  ['😱', 'scream scared fear face'], ['😤', 'steam angry frustrated face'],
+  ['😡', 'angry mad red face'], ['😠', 'angry mad face'], ['🤬', 'rage swearing cursing angry face'],
+  ['😈', 'devil smiling evil face'], ['👿', 'devil angry imp face'],
   ['💀', 'skull dead'], ['☠️', 'skull crossbones pirate dead'],
+  // Hands & Gestures
   ['👋', 'wave hand'], ['🤚', 'raised back hand'], ['🖐️', 'hand open fingers'], ['✋', 'raised hand stop'],
-  ['🤙', 'call hang loose shaka hand'], ['👍', 'thumbs up like good'], ['👎', 'thumbs down dislike bad'],
-  ['👏', 'clap applause hands'],
-  // Sound, music & entertainment
-  ['🦈', 'shark fish ocean'], ['🔊', 'loud speaker volume sound audio'], ['🎵', 'musical note song music'],
-  ['🎶', 'musical notes music song'], ['🎧', 'headphones music listen'], ['🎤', 'microphone mic sing'],
-  ['📣', 'megaphone announcement loud'], ['🎚️', 'level slider audio fader'],
+  ['🤙', 'call hang loose shaka hand'], ['🫱', 'rightwards hand reach'],
+  ['🫲', 'leftwards hand reach'], ['🫳', 'palm down hand'], ['🫴', 'palm up hand offer'],
+  ['🫵', 'index pointing you finger'], ['🫶', 'heart hands love gesture'],
+  ['🤌', 'pinched fingers italian gesture'], ['🤏', 'pinching hand small'],
+  ['✌️', 'victory peace two fingers'], ['🤞', 'crossed fingers luck hope'],
+  ['🖖', 'vulcan salute spock'], ['🤟', 'love you gesture sign language'],
+  ['🤘', 'sign horns rock metal'], ['👌', 'ok hand perfect'], ['👐', 'open hands hug'],
+  ['🙌', 'raising hands celebrate'], ['🤲', 'palms together prayer'],
+  ['🤜', 'right fist bump'], ['🤛', 'left fist bump'], ['✊', 'raised fist solidarity'],
+  ['👊', 'oncoming fist punch'], ['👍', 'thumbs up like good'], ['👎', 'thumbs down dislike bad'],
+  ['👏', 'clap applause hands'], ['👈', 'pointing left backhand'],
+  ['👉', 'pointing right backhand'], ['👆', 'pointing up backhand'],
+  ['👇', 'pointing down backhand'], ['☝️', 'index pointing up'],
+  ['🫰', 'hand index thumb crossed snap'],
+  // Sound & Music
+  ['🦈', 'shark fish ocean'], ['🔊', 'loud speaker volume sound audio'],
+  ['🔉', 'medium volume speaker sound audio'], ['🔈', 'low volume speaker sound audio'],
+  ['🔇', 'muted speaker silence audio'], ['🎵', 'musical note song music'],
+  ['🎶', 'musical notes music song'], ['🎧', 'headphones music listen'],
+  ['🎤', 'microphone mic sing'], ['🎙️', 'studio microphone recording podcast'],
+  ['📣', 'megaphone announcement loud'], ['📢', 'loudspeaker announcement'],
+  ['🎚️', 'level slider audio fader'], ['🎛️', 'control knobs audio dj'],
   ['🎸', 'guitar music rock'], ['🥁', 'drum music beat percussion'], ['🎷', 'saxophone jazz music'],
   ['🎺', 'trumpet music brass'], ['🎻', 'violin music string'], ['🪕', 'banjo country music'],
   ['🎹', 'piano keyboard music'], ['🪗', 'accordion music'],
+  ['📻', 'radio broadcast'], ['🎼', 'musical score sheet music'],
+  // Games & Entertainment
   ['🎉', 'party popper celebrate confetti'], ['🎊', 'confetti celebrate party'], ['🎈', 'balloon party celebrate'],
   ['🎁', 'gift present wrapped'], ['🏆', 'trophy winner award'], ['🥇', 'gold medal first place'],
+  ['🥈', 'silver medal second place'], ['🥉', 'bronze medal third place'],
   ['🎯', 'bullseye target dart'], ['🎮', 'video game controller gaming'],
   ['🕹️', 'joystick game arcade'], ['🎲', 'dice game random'], ['♟️', 'chess piece strategy'],
   ['🎪', 'circus tent'], ['🎭', 'theater drama arts'], ['🎨', 'palette art paint'],
-  ['🎬', 'clapperboard movie film cinema'], ['🎼', 'musical score sheet music'],
-  ['📻', 'radio broadcast'], ['📺', 'television tv screen'], ['📷', 'camera photo picture'],
+  ['🎬', 'clapperboard movie film cinema'], ['📺', 'television tv screen'], ['📷', 'camera photo picture'],
   ['📸', 'camera flash selfie photo'], ['🔭', 'telescope space stars astronomy'],
   ['🔬', 'microscope science lab'], ['💻', 'laptop computer'], ['🖥️', 'desktop monitor computer'],
   // Animals
@@ -141,31 +212,46 @@ const NATIVE_EMOJI_DATA: Array<[string, string]> = [
   ['🦁', 'lion king wild animal'], ['🐮', 'cow farm animal'], ['🐷', 'pig farm oink animal'],
   ['🐸', 'frog green animal'], ['🐵', 'monkey ape animal'], ['🙈', 'see no evil monkey'],
   ['🙉', 'hear no evil monkey'], ['🙊', 'speak no evil monkey'],
+  ['🦝', 'raccoon bandit animal'], ['🦦', 'otter swimming animal'], ['🦥', 'sloth slow animal'],
+  ['🦔', 'hedgehog spiky animal'], ['🐿️', 'chipmunk squirrel animal'], ['🦡', 'badger animal'],
   ['🐔', 'chicken hen bird animal'], ['🐧', 'penguin cold bird animal'], ['🐦', 'bird fly feather animal'],
   ['🦅', 'eagle bird predator animal'], ['🦆', 'duck quack animal'], ['🦉', 'owl wise bird animal'],
+  ['🦜', 'parrot colorful bird animal'], ['🦩', 'flamingo pink bird animal'], ['🦢', 'swan white bird animal'],
+  ['🦚', 'peacock colorful bird animal'], ['🕊️', 'dove peace bird white'],
   ['🐺', 'wolf wild animal'], ['🐴', 'horse pony animal'], ['🦄', 'unicorn magical horse'],
-  ['🐝', 'bee honey insect animal'], ['🦋', 'butterfly insect animal'], ['🐌', 'snail slow animal'],
+  ['🦋', 'butterfly insect animal'], ['🐝', 'bee honey insect animal'], ['🐌', 'snail slow animal'],
   ['🐞', 'ladybug insect bug animal'], ['🐜', 'ant insect colony animal'],
+  ['🦟', 'mosquito insect bug'], ['🕷️', 'spider web insect scary'], ['🦗', 'cricket insect chirp'],
   ['🦎', 'lizard reptile animal'], ['🐢', 'turtle slow reptile animal'], ['🐍', 'snake reptile animal'],
   ['🦕', 'sauropod dinosaur long neck'], ['🦖', 't-rex dinosaur tyrannosaurus'],
+  ['🐊', 'crocodile reptile snap'], ['🐉', 'dragon mythical creature fire'],
   ['🐳', 'whale ocean big animal'], ['🐬', 'dolphin ocean smart animal'], ['🐟', 'fish ocean sea animal'],
-  // Food & symbols
+  ['🐡', 'blowfish puffer fish ocean'], ['🐠', 'tropical fish colorful ocean'],
+  ['🐙', 'octopus tentacle ocean'], ['🦑', 'squid ocean sea'], ['🦀', 'crab red ocean'],
+  ['🦞', 'lobster red seafood ocean'], ['🦐', 'shrimp seafood ocean'],
+  ['🦣', 'mammoth extinct animal woolly'], ['🐘', 'elephant large animal trunk'],
+  ['🦛', 'hippo hippopotamus animal'], ['🦏', 'rhino rhinoceros horn animal'],
+  ['🦒', 'giraffe tall neck animal'], ['🦘', 'kangaroo australia animal'],
+  ['🦌', 'deer stag antler animal'], ['🐻‍❄️', 'polar bear arctic white animal'],
+  // Food & Drink
   ['🍎', 'apple red fruit food'], ['🍊', 'orange fruit food'], ['🍋', 'lemon sour fruit food'],
   ['🍇', 'grapes purple fruit food'], ['🍓', 'strawberry red fruit food'], ['🍒', 'cherries red fruit food'],
   ['🍑', 'peach fruit food'], ['🥝', 'kiwi green fruit food'],
+  ['🍉', 'watermelon fruit food red'], ['🍌', 'banana yellow fruit food'],
+  ['🍍', 'pineapple tropical fruit food'], ['🥭', 'mango tropical fruit food'],
+  ['🍐', 'pear green fruit food'], ['🫐', 'blueberry fruit food'],
+  ['🍈', 'melon green fruit food'], ['🍏', 'green apple fruit food'], ['🥑', 'avocado green food'],
+  ['🌽', 'ear corn maize food'],
   ['🍕', 'pizza food'], ['🍔', 'burger hamburger food'], ['🌮', 'taco mexican food'],
   ['🍣', 'sushi japanese food fish'], ['🍜', 'noodle ramen soup food'], ['🍦', 'ice cream dessert cold'],
   ['🍰', 'shortcake slice dessert sweet food'], ['🎂', 'birthday cake celebrate food'],
+  ['🧁', 'cupcake dessert sweet food'], ['🍩', 'doughnut donut sweet food'],
+  ['🍪', 'cookie sweet food'], ['🍫', 'chocolate bar sweet food'],
+  ['🍬', 'candy sweet food'], ['🍭', 'lollipop candy sweet food'],
   ['☕', 'coffee hot drink warm'], ['🍵', 'tea hot drink'], ['🍺', 'beer drink alcohol'],
   ['🍻', 'beers cheers clinking alcohol'], ['🥂', 'champagne toast celebrate'], ['🍷', 'wine red drink alcohol'],
   ['🧃', 'juice drink box'], ['🥤', 'cup straw drink'],
-  ['❤️', 'red heart love romance'], ['🧡', 'orange heart love'], ['💛', 'yellow heart love'],
-  ['💚', 'green heart love'], ['💙', 'blue heart love'], ['💜', 'purple heart love'],
-  ['🖤', 'black heart love'], ['🤍', 'white heart love'],
-  ['💯', 'hundred percent perfect'], ['✅', 'check mark done yes green'],
-  ['❌', 'cross x no wrong'], ['⚠️', 'warning caution alert'],
-  ['🔥', 'fire hot flame'], ['💥', 'boom explosion blast'], ['⭐', 'star yellow'], ['🌟', 'glowing star shine'],
-  // Nature & weather
+  // Nature & Weather
   ['🌸', 'cherry blossom pink flower spring'], ['🌺', 'hibiscus flower red'],
   ['🌻', 'sunflower yellow flower'], ['🌹', 'rose flower red romance'], ['🌷', 'tulip flower pink'],
   ['🌼', 'blossom flower yellow'], ['🌾', 'wheat grain farm'], ['🍀', 'four leaf clover lucky'],
@@ -179,7 +265,7 @@ const NATIVE_EMOJI_DATA: Array<[string, string]> = [
   ['🌙', 'crescent moon night'], ['🌑', 'new moon dark'], ['🌒', 'waxing crescent moon'],
   ['🌓', 'first quarter moon'], ['🌔', 'waxing gibbous moon'], ['🌕', 'full moon bright'],
   ['☀️', 'sun sunny bright day'], ['🌝', 'full moon face'], ['🌞', 'sun face bright'],
-  // Travel & places
+  // Travel & Places
   ['🚀', 'rocket space launch'], ['✈️', 'airplane plane fly travel'], ['🚂', 'locomotive train railway'],
   ['🚗', 'car automobile drive'], ['🚕', 'taxi cab yellow'], ['🚙', 'suv car vehicle'], ['🚌', 'bus transit transport'],
   ['🏎️', 'racing car fast sport'], ['🛸', 'ufo flying saucer alien space'], ['🚁', 'helicopter fly rotor'],
@@ -194,7 +280,7 @@ const NATIVE_EMOJI_DATA: Array<[string, string]> = [
   ['🗺️', 'world map geography'], ['🧭', 'compass direction navigation'],
   ['🏕️', 'camping tent outdoors'], ['⛺', 'tent camping'], ['🛖', 'hut cabin home'],
   ['🏠', 'house home'], ['🏡', 'house garden home'], ['🏢', 'office building city'],
-  // Objects & tools
+  // Objects & Tools
   ['💡', 'lightbulb idea bright'], ['🔦', 'flashlight torch light'], ['🕯️', 'candle light flame'],
   ['🔑', 'key lock door'], ['🗝️', 'old key antique'], ['🔒', 'locked secure closed'], ['🔓', 'unlocked open'],
   ['🔨', 'hammer tool'], ['⚒️', 'hammer pick tools'], ['🛠️', 'tools hammer wrench'], ['⛏️', 'pickaxe mining'],
@@ -208,7 +294,7 @@ const NATIVE_EMOJI_DATA: Array<[string, string]> = [
   ['💳', 'credit card payment'], ['📱', 'phone mobile cell'], ['⌨️', 'keyboard typing computer'],
   ['🖱️', 'computer mouse click'], ['🖨️', 'printer paper computer'], ['📦', 'package box parcel'],
   ['🧰', 'toolbox tools'],
-  // Sports & activities
+  // Sports
   ['⚽', 'soccer football sport'], ['🏀', 'basketball sport'], ['🏈', 'american football sport'],
   ['⚾', 'baseball sport'], ['🥎', 'softball sport'], ['🏐', 'volleyball sport'], ['🏉', 'rugby sport'],
   ['🎾', 'tennis sport'], ['🏸', 'badminton shuttlecock sport'], ['🏒', 'ice hockey sport'],
@@ -223,10 +309,26 @@ const NATIVE_EMOJI_DATA: Array<[string, string]> = [
   ['🏅', 'sports medal award'], ['🎗️', 'ribbon award reminder'], ['🏌️', 'golfing golf sport'],
   ['🧘', 'yoga meditation lotus calm'], ['🤺', 'fencing sword sport'], ['🤼', 'wrestling sport fight'],
   ['🤾', 'handball sport'],
+  // Symbols
+  ['❤️', 'red heart love romance'], ['🧡', 'orange heart love'], ['💛', 'yellow heart love'],
+  ['💚', 'green heart love'], ['💙', 'blue heart love'], ['💜', 'purple heart love'],
+  ['🖤', 'black heart love'], ['🤍', 'white heart love'], ['🤎', 'brown heart love'],
+  ['💔', 'broken heart sad love'], ['❣️', 'heart exclamation love'],
+  ['💕', 'two hearts love'], ['💞', 'revolving hearts love'], ['💓', 'beating heart love'],
+  ['💗', 'growing heart love'], ['💖', 'sparkling heart love'],
+  ['💘', 'heart arrow love cupid'], ['💝', 'heart ribbon love'],
+  ['💯', 'hundred percent perfect'], ['✅', 'check mark done yes green'],
+  ['❌', 'cross x no wrong'], ['⚠️', 'warning caution alert'],
+  ['🔥', 'fire hot flame'], ['💥', 'boom explosion blast'], ['⭐', 'star yellow'], ['🌟', 'glowing star shine'],
+  ['✨', 'sparkles glitter shine'], ['💫', 'dizzy star spin'],
+  ['🔔', 'bell alert notification'], ['🔕', 'bell slash silent notification'],
+  ['📌', 'pushpin red location'], ['📍', 'round pushpin location'],
+  ['🔴', 'red circle'], ['🟠', 'orange circle'], ['🟡', 'yellow circle'],
+  ['🟢', 'green circle'], ['🔵', 'blue circle'], ['🟣', 'purple circle'],
+  ['⚫', 'black circle'], ['⚪', 'white circle'], ['🟤', 'brown circle'],
 ];
 
 const SOUNDS_PER_PAGE = 20;
-const CUSTOM_EMOJI_PAGE_SIZE = 40;
 
 const isCustomEmoji = (value: string) => value.startsWith('/public/');
 
@@ -283,33 +385,6 @@ const EmojiDisplay = ({ value, className }: { value: string; className?: string 
   return <img src={src} className={`inline-block object-contain align-middle ${className ?? 'h-5 w-5'}`} alt="" />;
 };
 
-// Compact numbered page buttons, hidden when there is only one page.
-const PageButtons = ({
-  page,
-  pageCount,
-  onPage,
-}: {
-  page: number;
-  pageCount: number;
-  onPage: (p: number) => void;
-}) => {
-  if (pageCount <= 1) return null;
-  return (
-    <div className="flex gap-1 justify-center">
-      {Array.from({ length: pageCount }, (_, i) => (
-        <button
-          key={i}
-          type="button"
-          onClick={() => onPage(i)}
-          className={`h-6 w-6 rounded border text-xs ${page === i ? 'bg-accent font-semibold' : 'opacity-60 hover:bg-accent'}`}
-        >
-          {i + 1}
-        </button>
-      ))}
-    </div>
-  );
-};
-
 // ---------------------------------------------------------------------------
 // Two-tab emoji picker (Native | Custom).
 // The Custom tab is hidden when the server has no custom emojis.
@@ -326,8 +401,6 @@ const EmojiPicker = ({
 }) => {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'native' | 'custom'>('native');
-  const [nativePage, setNativePage] = useState(0);
-  const [customPage, setCustomPage] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -339,7 +412,7 @@ const EmojiPicker = ({
     if (!open && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
       const dropdownWidth = 296;
-      const dropdownHeight = 310;
+      const dropdownHeight = 380;
       let top = rect.bottom + 4;
       if (top + dropdownHeight > window.innerHeight - 8) {
         top = rect.top - dropdownHeight - 4;
@@ -380,12 +453,6 @@ const EmojiPicker = ({
     onChange(v);
     setOpen(false);
   };
-
-  const customPageCount = Math.ceil(customEmojis.length / CUSTOM_EMOJI_PAGE_SIZE);
-  const visibleCustomEmojis = customEmojis.slice(
-    customPage * CUSTOM_EMOJI_PAGE_SIZE,
-    (customPage + 1) * CUSTOM_EMOJI_PAGE_SIZE,
-  );
 
   // Compute search results when a query is active
   const q = searchQuery.trim().toLowerCase();
@@ -482,25 +549,29 @@ const EmojiPicker = ({
           ) : null}
 
           {tab === 'native' || !hasCustom ? (
-            <div className="p-2 flex flex-col gap-1.5">
-              <div className="grid grid-cols-8 gap-1">
-                {NATIVE_EMOJI_PAGES[nativePage].map((candidate) => (
-                  <button
-                    key={candidate}
-                    type="button"
-                    onClick={() => pick(candidate)}
-                    className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
-                  >
-                    {candidate}
-                  </button>
-                ))}
-              </div>
-              <PageButtons page={nativePage} pageCount={NATIVE_EMOJI_PAGES.length} onPage={setNativePage} />
+            <div className="max-h-64 overflow-y-auto sounddrop-scroll p-2">
+              {NATIVE_EMOJI_CATEGORIES.map(({ name, emojis }) => (
+                <div key={name} className="mb-2">
+                  <div className="text-[9px] uppercase tracking-widest opacity-25 mb-1 px-0.5 select-none">{name}</div>
+                  <div className="grid grid-cols-8 gap-1">
+                    {emojis.map((candidate) => (
+                      <button
+                        key={candidate}
+                        type="button"
+                        onClick={() => pick(candidate)}
+                        className={`rounded px-1 py-1 text-lg hover:bg-accent ${value === candidate ? 'bg-accent' : ''}`}
+                      >
+                        {candidate}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
-            <div className="p-2 flex flex-col gap-1.5">
+            <div className="max-h-64 overflow-y-auto sounddrop-scroll p-2">
               <div className="grid grid-cols-8 gap-1">
-                {visibleCustomEmojis.map((emoji) => {
+                {customEmojis.map((emoji) => {
                   const storedUrl = `/public/${emoji.file.name}`;
                   return (
                     <button
@@ -515,7 +586,6 @@ const EmojiPicker = ({
                   );
                 })}
               </div>
-              <PageButtons page={customPage} pageCount={customPageCount} onPage={setCustomPage} />
             </div>
           )}
         </>
