@@ -968,16 +968,32 @@ const onLoad = async (ctx: PluginContext) => {
         ffmpegPid: ffmpeg.pid
       });
 
+      let lastFfmpegPtsMs = 0;
+      const ffmpegStartWallMs = Date.now();
+
       ffmpeg.stderr.on('data', (chunk) => {
         ctx.debug('ffmpeg stderr', String(chunk));
+        // Track the highest PTS ffmpeg has encoded so we can calculate how far
+        // ahead of real-time it is when it exits (MP3 start-PTS offsets cause
+        // ffmpeg to burst ahead at 1.5-2x even with -re).
+        const text = String(chunk);
+        const matches = text.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d+)/g);
+        if (matches) {
+          const last = matches[matches.length - 1].match(/time=(\d{2}):(\d{2}):(\d{2}\.\d+)/)!;
+          const pts = (parseInt(last[1], 10) * 3600 + parseInt(last[2], 10) * 60 + parseFloat(last[3])) * 1000;
+          if (pts > lastFfmpegPtsMs) lastFfmpegPtsMs = pts;
+        }
       });
 
       ffmpeg.on('exit', () => {
         ctx.log('ffmpeg playback ended', { userId: invokerCtx.userId, channelId });
-        // Stop only this specific playback, not all playbacks for the user.
-        // Previously this called stopPlaybackForUser which could accidentally
-        // kill a concurrently-started new playback.
-        stopPlayback(ctx, playbackId);
+        // ffmpeg frequently sends audio ahead of real-time (especially for short
+        // clips with a non-zero MP3 start PTS). Closing the producer immediately
+        // drops audio still buffered in the mediasoup pipeline. Wait for the
+        // buffered audio to drain before tearing down resources.
+        const elapsedMs = Date.now() - ffmpegStartWallMs;
+        const aheadMs = Math.max(0, lastFfmpegPtsMs - elapsedMs);
+        setTimeout(() => stopPlayback(ctx, playbackId), Math.min(aheadMs + 150, 5000));
       });
 
       return { ok: true };
