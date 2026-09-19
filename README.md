@@ -15,7 +15,7 @@ A [Sharkord](https://github.com/sharkord/sharkord) plugin that adds a soundboard
 
 1. In the Sharkord plugin marketplace, locate "SoundDrop" and click Install.
 
-> NOTE: If using the Update feature in the Sharkord marketplace, it is recommended that you manually backup your "sounds" folder prior to the update. The update process will remove that folder (removing all existing sounds).
+> NOTE: Updating from a version older than 0.0.8 to 0.0.8 or later: back up your "sounds" folder before updating. Older versions stored sounds in a location the marketplace's Update feature wipes on every update; 0.0.8 moves sound storage to the plugin's persistent data folder, so this is the last update that requires a manual backup.
 
 ### Manual installation:
 

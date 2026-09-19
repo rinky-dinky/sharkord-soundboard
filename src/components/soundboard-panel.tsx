@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { TPluginEmoji } from '@sharkord/plugin-sdk';
+import { callPluginAction } from '../client/call-action';
 import type { TListSoundsResponse, TSoundInfo } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -1118,7 +1119,7 @@ const useSharkordStore = () => {
     return store.subscribe(() => setState(store.getState()));
   }, [store]);
 
-  return { state, actions: store.actions };
+  return { state };
 };
 
 // ---------------------------------------------------------------------------
@@ -1304,9 +1305,9 @@ const SoundManagePanel = ({
 // ---------------------------------------------------------------------------
 
 const SoundboardPanel = ({ isEditing, isAddingSound, onAddSoundDone, onPlayingChange }: { isEditing: boolean; isAddingSound: boolean; onAddSoundDone: () => void; onPlayingChange?: (isPlaying: boolean) => void }) => {
-  const { state, actions } = useSharkordStore();
+  const { state } = useSharkordStore();
   const { currentVoiceChannelId, emojis: customEmojis = [] } = state;
-  const { executePluginAction } = actions;
+  const executePluginAction = callPluginAction;
 
   const [sounds, setSounds] = useState<TSoundInfo[]>([]);
   const [name, setName] = useState('');

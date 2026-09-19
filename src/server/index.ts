@@ -1,20 +1,20 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { access, chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { inflateRaw } from 'node:zlib';
-import type { PlainTransport, PluginContext, Producer, TInvokerContext } from '@sharkord/plugin-sdk';
+import type { PlainTransport, PluginContext, Producer, TInvokerContext, UnloadPluginContext } from '@sharkord/plugin-sdk';
 import type { TGetSoundDataResponse, TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from '../types';
 
 const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 10;
 const RTP_AUDIO_PAYLOAD_TYPE = 111;
 
-const getSoundsDir = (pluginPath: string) => join(pluginPath, 'sounds');
-const getSoundsJsonPath = (pluginPath: string) => join(getSoundsDir(pluginPath), 'sounds.json');
+const getSoundsDir = (storagePath: string) => join(storagePath, 'sounds');
+const getSoundsJsonPath = (storagePath: string) => join(getSoundsDir(storagePath), 'sounds.json');
 
-const getFfmpegBinaryPath = (pluginPath: string) => {
+const getFfmpegBinaryPath = (storagePath: string) => {
   const binaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  return join(pluginPath, 'bin', binaryName);
+  return join(storagePath, 'bin', binaryName);
 };
 
 // Maps process.platform + process.arch to an ffbinaries component name.
@@ -63,8 +63,8 @@ const extractZipEntry = (zipBuf: Buffer, entryName: string): Promise<Buffer> =>
     reject(new Error(`Entry "${entryName}" not found in zip archive`));
   });
 
-const downloadFfmpegBinary = async (pluginPath: string, log: (msg: string) => void): Promise<void> => {
-  const binDir = join(pluginPath, 'bin');
+const downloadFfmpegBinary = async (dataPath: string, log: (msg: string) => void): Promise<void> => {
+  const binDir = join(dataPath, 'bin');
   await mkdir(binDir, { recursive: true });
 
   const component = getFfbinariesComponent();
@@ -86,7 +86,7 @@ const downloadFfmpegBinary = async (pluginPath: string, log: (msg: string) => vo
   log('[soundboard] extracting ffmpeg binary…');
   const binary = await extractZipEntry(zipBuf, entryName);
 
-  const ffmpegPath = getFfmpegBinaryPath(pluginPath);
+  const ffmpegPath = getFfmpegBinaryPath(dataPath);
   await writeFile(ffmpegPath, binary);
 
   if (process.platform !== 'win32') {
@@ -96,8 +96,8 @@ const downloadFfmpegBinary = async (pluginPath: string, log: (msg: string) => vo
   log(`[soundboard] ffmpeg installed at ${ffmpegPath}`);
 };
 
-const ensureFfmpegBinary = async (pluginPath: string, log: (msg: string) => void): Promise<string> => {
-  const ffmpegPath = getFfmpegBinaryPath(pluginPath);
+const ensureFfmpegBinary = async (dataPath: string, log: (msg: string) => void): Promise<string> => {
+  const ffmpegPath = getFfmpegBinaryPath(dataPath);
 
   try {
     await access(ffmpegPath, fsConstants.X_OK);
@@ -107,7 +107,7 @@ const ensureFfmpegBinary = async (pluginPath: string, log: (msg: string) => void
   }
 
   log('[soundboard] ffmpeg not found in bin/, downloading…');
-  await downloadFfmpegBinary(pluginPath, log);
+  await downloadFfmpegBinary(dataPath, log);
 
   // Verify the binary is now accessible and executable
   await access(ffmpegPath, fsConstants.X_OK);
@@ -144,9 +144,9 @@ const trimAudioWithFfmpeg = (
     });
   });
 
-const loadSounds = async (pluginPath: string): Promise<TSoundEntry[]> => {
+const loadSounds = async (storagePath: string): Promise<TSoundEntry[]> => {
   try {
-    const raw = await readFile(getSoundsJsonPath(pluginPath), 'utf8');
+    const raw = await readFile(getSoundsJsonPath(storagePath), 'utf8');
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
@@ -167,8 +167,8 @@ const loadSounds = async (pluginPath: string): Promise<TSoundEntry[]> => {
   }
 };
 
-const saveSounds = async (pluginPath: string, sounds: TSoundEntry[]): Promise<void> => {
-  await writeFile(getSoundsJsonPath(pluginPath), JSON.stringify(sounds, null, 2), 'utf8');
+const saveSounds = async (storagePath: string, sounds: TSoundEntry[]): Promise<void> => {
+  await writeFile(getSoundsJsonPath(storagePath), JSON.stringify(sounds, null, 2), 'utf8');
 };
 
 const getExtFromMimeType = (mimeType: string): string => {
@@ -177,6 +177,41 @@ const getExtFromMimeType = (mimeType: string): string => {
   if (mimeType.includes('flac')) return 'flac';
   if (mimeType.includes('aac')) return 'aac';
   return 'mp3';
+};
+
+// ---------------------------------------------------------------------------
+// ctx.path -> ctx.dataPath migration
+//
+// Older SDK versions only gave plugins ctx.path, which is wiped and rewritten
+// on every plugin update — this plugin used to store sounds there, which is
+// why updating it used to require a manual backup. The current SDK adds
+// ctx.dataPath, which survives updates, so all storage now lives there.
+//
+// This one-time copy only helps when ctx.path still happens to hold sound
+// data (e.g. a reload that didn't go through a marketplace update, which
+// wipes and rewrites the plugin folder before onLoad ever runs). It cannot
+// recover sounds that were already wiped by the update that installed this
+// version — see the README for that one-time migration note.
+// ---------------------------------------------------------------------------
+
+const migrateSoundsDirToDataPath = async (ctx: PluginContext): Promise<void> => {
+  try {
+    await access(getSoundsJsonPath(ctx.dataPath), fsConstants.F_OK);
+    return; // already has sounds in the persistent location
+  } catch {
+    // continue
+  }
+
+  try {
+    await access(getSoundsJsonPath(ctx.path), fsConstants.F_OK);
+  } catch {
+    return; // nothing left in the old location to migrate
+  }
+
+  ctx.logger.log('[soundboard] migrating sound storage from the plugin folder to the persistent data folder…');
+  await mkdir(getSoundsDir(ctx.dataPath), { recursive: true });
+  await cp(getSoundsDir(ctx.path), getSoundsDir(ctx.dataPath), { recursive: true });
+  ctx.logger.log('[soundboard] sound storage migrated to the persistent data folder');
 };
 
 // ---------------------------------------------------------------------------
@@ -278,10 +313,10 @@ const findLegacyPublicSounds = async (
       try {
         const raw = await readFile(fullPath, 'utf8');
         const sounds = parseLegacyPublicJson(raw);
-        ctx.log(`[soundboard] found legacy file at ${fullPath} (${sounds.length} valid entries)`);
+        ctx.logger.log(`[soundboard] found legacy file at ${fullPath} (${sounds.length} valid entries)`);
         if (sounds.length > 0) return { sounds, publicDir: dir };
       } catch {
-        ctx.log(`[soundboard] no legacy file at ${fullPath}`);
+        ctx.logger.log(`[soundboard] no legacy file at ${fullPath}`);
       }
     }
   }
@@ -308,16 +343,16 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
   // Use a dedicated marker file so this gate is independent of sounds.json.
   // sounds.json is created whenever a new sound is uploaded, which would
   // otherwise cause the migration to be silently skipped on every restart.
-  const markerPath = join(getSoundsDir(ctx.path), LEGACY_MIGRATION_MARKER);
+  const markerPath = join(getSoundsDir(ctx.dataPath), LEGACY_MIGRATION_MARKER);
   try {
     await access(markerPath, fsConstants.F_OK);
-    ctx.log('[soundboard] legacy migration already completed, skipping');
+    ctx.logger.log('[soundboard] legacy migration already completed, skipping');
     return;
   } catch {
     // marker absent — proceed
   }
 
-  ctx.log('[soundboard] checking for legacy sounds to migrate…');
+  ctx.logger.log('[soundboard] checking for legacy sounds to migrate…');
 
   // Try settings first (plain JSON array stored under key "soundsJson")
   let legacySounds: TLegacySoundEntry[] = [];
@@ -333,17 +368,17 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
       }
     ] as const);
 
-    const raw = await legacySettings.get('soundsJson');
+    const raw = legacySettings.get('soundsJson');
     legacySounds = parseLegacySettingsArray(raw);
 
     if (legacySounds.length > 0) {
-      ctx.log(`[soundboard] found ${legacySounds.length} sound(s) in legacy settings`);
+      ctx.logger.log(`[soundboard] found ${legacySounds.length} sound(s) in legacy settings`);
       legacySettings.set('soundsJson', '[]');
     } else {
-      ctx.log('[soundboard] legacy settings key is empty, trying public mirror files…');
+      ctx.logger.log('[soundboard] legacy settings key is empty, trying public mirror files…');
     }
   } catch (error) {
-    ctx.log(`[soundboard] could not read legacy settings (${String(error)}), trying public mirror files…`);
+    ctx.logger.log(`[soundboard] could not read legacy settings (${String(error)}), trying public mirror files…`);
   }
 
   // Fall back to the public mirror files if settings were empty
@@ -357,12 +392,12 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
   }
 
   if (legacySounds.length === 0) {
-    ctx.log('[soundboard] no legacy sounds found — writing migration marker and continuing');
+    ctx.logger.log('[soundboard] no legacy sounds found — writing migration marker and continuing');
     await writeFile(markerPath, String(Date.now()), 'utf8');
     return;
   }
 
-  ctx.log(`[soundboard] migrating ${legacySounds.length} legacy sound(s) to plugin directory…`);
+  ctx.logger.log(`[soundboard] migrating ${legacySounds.length} legacy sound(s) to plugin directory…`);
 
   const migratedSounds: TSoundEntry[] = [];
 
@@ -381,18 +416,18 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
           if (localFilePath) {
             try {
               fileBuffer = await readFile(localFilePath);
-              ctx.log(`[soundboard] read "${old.name}" from ${localFilePath}`);
+              ctx.logger.log(`[soundboard] read "${old.name}" from ${localFilePath}`);
             } catch {
-              ctx.log(`[soundboard] "${old.name}" not at ${localFilePath}, falling back to HTTP`);
+              ctx.logger.log(`[soundboard] "${old.name}" not at ${localFilePath}, falling back to HTTP`);
             }
           }
         }
 
         if (!fileBuffer) {
-          ctx.log(`[soundboard] fetching "${old.name}" from ${old.sourceUrl}`);
+          ctx.logger.log(`[soundboard] fetching "${old.name}" from ${old.sourceUrl}`);
           const response = await fetch(old.sourceUrl);
           if (!response.ok) {
-            ctx.log(`[soundboard] fetch failed for "${old.name}" (HTTP ${response.status}) — skipping`);
+            ctx.logger.log(`[soundboard] fetch failed for "${old.name}" (HTTP ${response.status}) — skipping`);
             continue;
           }
           fileBuffer = Buffer.from(await response.arrayBuffer());
@@ -402,12 +437,12 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
       if (!fileBuffer) continue;
 
       if (fileBuffer.byteLength > MAX_FILE_SIZE_BYTES) {
-        ctx.log(`[soundboard] "${old.name}" exceeds size limit — skipping`);
+        ctx.logger.log(`[soundboard] "${old.name}" exceeds size limit — skipping`);
         continue;
       }
 
       const ext = getExtFromMimeType(old.mimeType);
-      const localPath = join(getSoundsDir(ctx.path), `${old.id}.${ext}`);
+      const localPath = join(getSoundsDir(ctx.dataPath), `${old.id}.${ext}`);
       await writeFile(localPath, fileBuffer);
 
       migratedSounds.push({
@@ -420,20 +455,20 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
         createdAt: old.createdAt
       });
 
-      ctx.log(`[soundboard] migrated "${old.name}" (${old.id})`);
+      ctx.logger.log(`[soundboard] migrated "${old.name}" (${old.id})`);
     } catch (error) {
-      ctx.log(`[soundboard] error migrating "${old.name}": ${String(error)}`);
+      ctx.logger.log(`[soundboard] error migrating "${old.name}": ${String(error)}`);
     }
   }
 
   // Merge with any sounds already in the new system (old sounds first so
   // they keep their original order; skip any whose id already exists)
   if (migratedSounds.length > 0) {
-    const existingSounds = await loadSounds(ctx.path);
+    const existingSounds = await loadSounds(ctx.dataPath);
     const existingIds = new Set(existingSounds.map((s) => s.id));
     const toAdd = migratedSounds.filter((s) => !existingIds.has(s.id));
-    await saveSounds(ctx.path, [...toAdd, ...existingSounds]);
-    ctx.log(
+    await saveSounds(ctx.dataPath, [...toAdd, ...existingSounds]);
+    ctx.logger.log(
       `[soundboard] migration complete: ${toAdd.length} sound(s) added` +
         (migratedSounds.length - toAdd.length > 0
           ? `, ${migratedSounds.length - toAdd.length} already present`
@@ -442,7 +477,7 @@ const migrateLegacy = async (ctx: PluginContext): Promise<void> => {
   } else {
     // Don't write the marker — let migration retry on the next startup so that
     // a transient failure (e.g. a self-request 502) doesn't permanently block it.
-    ctx.log('[soundboard] migration ran but no sounds could be imported; will retry on next startup');
+    ctx.logger.log('[soundboard] migration ran but no sounds could be imported; will retry on next startup');
     return;
   }
 
@@ -482,7 +517,7 @@ type TWarmup = {
 
 const warmupByUser = new Map<number, TWarmup>();
 
-const teardownWarmupForUser = (ctx: PluginContext, userId: number) => {
+const teardownWarmupForUser = (userId: number) => {
   const warmup = warmupByUser.get(userId);
   if (!warmup) return;
   warmup.streamHandleRemove();
@@ -495,7 +530,7 @@ const teardownWarmupForUser = (ctx: PluginContext, userId: number) => {
 // consumer to subscribe. On success the result is stored in warmupByUser and
 // play_sound can use it without any delay.
 const startWarmup = async (ctx: PluginContext, userId: number, channelId: number): Promise<void> => {
-  teardownWarmupForUser(ctx, userId);
+  teardownWarmupForUser(userId);
 
   const router = ctx.voice.getRouter(channelId);
   const { announcedAddress, ip } = ctx.voice.getListenInfo();
@@ -560,15 +595,15 @@ const startWarmup = async (ctx: PluginContext, userId: number, channelId: number
     if (warmupByUser.get(userId) !== warmupEntry) return;
     warmupEntry.ready = true;
 
-    ctx.debug('SoundDrop warmup ready', { userId, channelId });
+    ctx.logger.debug('SoundDrop warmup ready', { userId, channelId });
   } catch (err) {
-    ctx.debug('SoundDrop warmup failed', err);
+    ctx.logger.debug('SoundDrop warmup failed', err);
     transport?.close();
     warmupByUser.delete(userId);
   }
 };
 
-const stopPlayback = (ctx: PluginContext, playbackId: string) => {
+const stopPlayback = (ctx: UnloadPluginContext, playbackId: string) => {
   const playback = activePlaybacks.get(playbackId);
   if (!playback) return;
 
@@ -580,7 +615,7 @@ const stopPlayback = (ctx: PluginContext, playbackId: string) => {
     try {
       process.kill(playback.ffmpegPid, 'SIGTERM');
     } catch (error) {
-      ctx.debug('Could not stop ffmpeg process', error);
+      ctx.logger.debug('Could not stop ffmpeg process', error);
     }
   }
 
@@ -589,20 +624,22 @@ const stopPlayback = (ctx: PluginContext, playbackId: string) => {
 
 
 const onLoad = async (ctx: PluginContext) => {
-  ctx.log('SoundDrop plugin loaded');
+  ctx.logger.log('SoundDrop plugin loaded');
 
-  const ffmpegBinaryPath = await ensureFfmpegBinary(ctx.path, ctx.log);
-  ctx.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
+  await mkdir(getSoundsDir(ctx.dataPath), { recursive: true });
+  await migrateSoundsDirToDataPath(ctx);
 
-  await mkdir(getSoundsDir(ctx.path), { recursive: true });
+  const ffmpegBinaryPath = await ensureFfmpegBinary(ctx.dataPath, ctx.logger.log);
+  ctx.logger.log(`Using ffmpeg binary at: ${ffmpegBinaryPath}`);
+
   await migrateLegacy(ctx);
 
   ctx.ui.enable();
 
   ctx.actions.register({
     name: 'list_sounds',
-    async execute() {
-      const sounds = await loadSounds(ctx.path);
+    async executes() {
+      const sounds = await loadSounds(ctx.dataPath);
       const response: TListSoundsResponse = {
         sounds: sounds.map(({ localPath: _localPath, ...rest }) => rest)
       };
@@ -612,7 +649,7 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'upload_sound',
-    async execute(invokerCtx: TInvokerContext, payload: TUploadSoundPayload) {
+    async executes(invokerCtx: TInvokerContext, payload: TUploadSoundPayload) {
       const name = payload.name.trim();
       const emoji = payload.emoji.trim();
       const { fileData, mimeType } = payload;
@@ -628,7 +665,7 @@ const onLoad = async (ctx: PluginContext) => {
 
       const soundId = payload.id?.trim() || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const ext = getExtFromMimeType(mimeType);
-      const localPath = join(getSoundsDir(ctx.path), `${soundId}.${ext}`);
+      const localPath = join(getSoundsDir(ctx.dataPath), `${soundId}.${ext}`);
 
       await writeFile(localPath, fileBuffer);
 
@@ -636,7 +673,7 @@ const onLoad = async (ctx: PluginContext) => {
         await trimAudioWithFfmpeg(ffmpegBinaryPath, localPath, payload.trimStart, payload.trimEnd);
       }
 
-      const sounds = await loadSounds(ctx.path);
+      const sounds = await loadSounds(ctx.dataPath);
       const newEntry: TSoundEntry = {
         id: soundId,
         name,
@@ -649,7 +686,7 @@ const onLoad = async (ctx: PluginContext) => {
       };
 
       sounds.push(newEntry);
-      await saveSounds(ctx.path, sounds);
+      await saveSounds(ctx.dataPath, sounds);
 
       const { localPath: _localPath, ...newEntryInfo } = newEntry;
       return newEntryInfo;
@@ -658,8 +695,8 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'delete_sound',
-    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string }) {
-      const sounds = await loadSounds(ctx.path);
+    async executes(_invokerCtx: TInvokerContext, payload: { soundId: string }) {
+      const sounds = await loadSounds(ctx.dataPath);
       const sound = sounds.find((entry) => entry.id === payload.soundId);
       if (!sound) throw new Error('Sound not found.');
 
@@ -669,15 +706,15 @@ const onLoad = async (ctx: PluginContext) => {
         // File may already be gone; continue with removing from index
       }
 
-      await saveSounds(ctx.path, sounds.filter((entry) => entry.id !== payload.soundId));
+      await saveSounds(ctx.dataPath, sounds.filter((entry) => entry.id !== payload.soundId));
       return { ok: true };
     }
   });
 
   ctx.actions.register({
     name: 'reorder_sounds',
-    async execute(_invokerCtx: TInvokerContext, payload: { orderedIds: string[] }) {
-      const sounds = await loadSounds(ctx.path);
+    async executes(_invokerCtx: TInvokerContext, payload: { orderedIds: string[] }) {
+      const sounds = await loadSounds(ctx.dataPath);
       const idToSound = new Map(sounds.map((s) => [s.id, s]));
       const reordered = payload.orderedIds.flatMap((id) => {
         const s = idToSound.get(id);
@@ -688,14 +725,14 @@ const onLoad = async (ctx: PluginContext) => {
       for (const s of sounds) {
         if (!mentioned.has(s.id)) reordered.push(s);
       }
-      await saveSounds(ctx.path, reordered);
+      await saveSounds(ctx.dataPath, reordered);
       return { ok: true };
     }
   });
 
   ctx.actions.register({
     name: 'update_sound',
-    async execute(_invokerCtx: TInvokerContext, payload: {
+    async executes(_invokerCtx: TInvokerContext, payload: {
       soundId: string;
       name: string;
       emoji: string;
@@ -710,7 +747,7 @@ const onLoad = async (ctx: PluginContext) => {
       if (!name) throw new Error('Sound name is required.');
       if (!emoji) throw new Error('An emoji is required.');
 
-      const sounds = await loadSounds(ctx.path);
+      const sounds = await loadSounds(ctx.dataPath);
       const idx = sounds.findIndex((entry) => entry.id === payload.soundId);
       if (idx === -1) throw new Error('Sound not found.');
 
@@ -725,7 +762,7 @@ const onLoad = async (ctx: PluginContext) => {
           throw new Error(`Sound file too large. Max size is ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
         }
         const newExt = getExtFromMimeType(payload.mimeType);
-        const newLocalPath = join(getSoundsDir(ctx.path), `${payload.soundId}.${newExt}`);
+        const newLocalPath = join(getSoundsDir(ctx.dataPath), `${payload.soundId}.${newExt}`);
         // Remove the old file if its path would differ (extension changed)
         if (sounds[idx].localPath !== newLocalPath) {
           try { await unlink(sounds[idx].localPath); } catch { /* already gone */ }
@@ -742,7 +779,7 @@ const onLoad = async (ctx: PluginContext) => {
       }
 
       sounds[idx] = { ...sounds[idx], ...update };
-      await saveSounds(ctx.path, sounds);
+      await saveSounds(ctx.dataPath, sounds);
 
       const { localPath: _localPath, ...updated } = sounds[idx];
       return updated;
@@ -751,8 +788,8 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'get_sound_data',
-    async execute(_invokerCtx: TInvokerContext, payload: { soundId: string }) {
-      const sounds = await loadSounds(ctx.path);
+    async executes(_invokerCtx: TInvokerContext, payload: { soundId: string }) {
+      const sounds = await loadSounds(ctx.dataPath);
       const sound = sounds.find((entry) => entry.id === payload.soundId);
       if (!sound) throw new Error('Sound not found.');
       const fileBuffer = await readFile(sound.localPath);
@@ -766,7 +803,7 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'get_emoji_data',
-    async execute(_invokerCtx: TInvokerContext, payload: { fileName: string }) {
+    async executes(_invokerCtx: TInvokerContext, payload: { fileName: string }) {
       const { fileName } = payload;
       // Validate: must be a plain filename with no path separators or traversal
       if (!fileName || fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) {
@@ -799,7 +836,7 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'warmup_soundboard',
-    async execute(invokerCtx: TInvokerContext) {
+    async executes(invokerCtx: TInvokerContext) {
       if (!invokerCtx.currentVoiceChannelId) return { ok: true };
       await startWarmup(ctx, invokerCtx.userId, invokerCtx.currentVoiceChannelId);
       return { ok: true };
@@ -808,8 +845,8 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'teardown_soundboard',
-    async execute(invokerCtx: TInvokerContext) {
-      teardownWarmupForUser(ctx, invokerCtx.userId);
+    async executes(invokerCtx: TInvokerContext) {
+      teardownWarmupForUser(invokerCtx.userId);
       return { ok: true };
     }
   });
@@ -817,7 +854,7 @@ const onLoad = async (ctx: PluginContext) => {
   ctx.commands.register({
     name: 'stop_sounds',
     description: 'Stop all currently playing soundboard sounds',
-    async execute(_invokerCtx: TInvokerContext) {
+    async executes(_invokerCtx: TInvokerContext) {
       for (const playbackId of [...activePlaybacks.keys()]) {
         stopPlayback(ctx, playbackId);
       }
@@ -827,7 +864,7 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'stop_sounds',
-    async execute(_invokerCtx: TInvokerContext) {
+    async executes(_invokerCtx: TInvokerContext) {
       for (const playbackId of [...activePlaybacks.keys()]) {
         stopPlayback(ctx, playbackId);
       }
@@ -837,8 +874,8 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'play_sound',
-    async execute(invokerCtx: TInvokerContext, payload: { soundId: string }) {
-      ctx.debug('Action play_sound invoked', {
+    async executes(invokerCtx: TInvokerContext, payload: { soundId: string }) {
+      ctx.logger.debug('Action play_sound invoked', {
         userId: invokerCtx.userId,
         currentVoiceChannelId: invokerCtx.currentVoiceChannelId,
         soundId: payload.soundId
@@ -849,7 +886,7 @@ const onLoad = async (ctx: PluginContext) => {
       }
 
       const channelId = invokerCtx.currentVoiceChannelId;
-      const sounds = await loadSounds(ctx.path);
+      const sounds = await loadSounds(ctx.dataPath);
       const sound = sounds.find((entry) => entry.id === payload.soundId);
       if (!sound) throw new Error('Sound not found.');
 
@@ -877,7 +914,7 @@ const onLoad = async (ctx: PluginContext) => {
         startWarmup(ctx, invokerCtx.userId, channelId).catch(() => {});
       } else {
         // No warmup available — create on-demand and wait for the consumer.
-        teardownWarmupForUser(ctx, invokerCtx.userId);
+        teardownWarmupForUser(invokerCtx.userId);
 
         const router = ctx.voice.getRouter(channelId);
         const listenInfo = ctx.voice.getListenInfo();
@@ -962,7 +999,7 @@ const onLoad = async (ctx: PluginContext) => {
 
       playbackEntry.ffmpegPid = ffmpeg.pid;
 
-      ctx.log('Started ffmpeg playback', {
+      ctx.logger.log('Started ffmpeg playback', {
         userId: invokerCtx.userId,
         channelId,
         ffmpegPid: ffmpeg.pid
@@ -972,7 +1009,7 @@ const onLoad = async (ctx: PluginContext) => {
       const ffmpegStartWallMs = Date.now();
 
       ffmpeg.stderr.on('data', (chunk) => {
-        ctx.debug('ffmpeg stderr', String(chunk));
+        ctx.logger.debug('ffmpeg stderr', String(chunk));
         // Track the highest PTS ffmpeg has encoded so we can calculate how far
         // ahead of real-time it is when it exits (MP3 start-PTS offsets cause
         // ffmpeg to burst ahead at 1.5-2x even with -re).
@@ -986,7 +1023,7 @@ const onLoad = async (ctx: PluginContext) => {
       });
 
       ffmpeg.on('exit', () => {
-        ctx.log('ffmpeg playback ended', { userId: invokerCtx.userId, channelId });
+        ctx.logger.log('ffmpeg playback ended', { userId: invokerCtx.userId, channelId });
         // ffmpeg frequently sends audio ahead of real-time (especially for short
         // clips with a non-zero MP3 start PTS). Closing the producer immediately
         // drops audio still buffered in the mediasoup pipeline. Wait for the
@@ -1002,7 +1039,7 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.actions.register({
     name: 'get_active_playbacks',
-    async execute(invokerCtx: TInvokerContext) {
+    async executes(invokerCtx: TInvokerContext) {
       const activeSoundIds: string[] = [];
       for (const playback of activePlaybacks.values()) {
         if (playback.userId === invokerCtx.userId) {
@@ -1014,15 +1051,15 @@ const onLoad = async (ctx: PluginContext) => {
   });
 };
 
-const onUnload = (ctx: PluginContext) => {
+const onUnload = (ctx: UnloadPluginContext) => {
   for (const playbackId of activePlaybacks.keys()) {
     stopPlayback(ctx, playbackId);
   }
   for (const userId of warmupByUser.keys()) {
-    teardownWarmupForUser(ctx, userId);
+    teardownWarmupForUser(userId);
   }
   ctx.ui.disable();
-  ctx.log('SoundDrop plugin unloaded');
+  ctx.logger.log('SoundDrop plugin unloaded');
 };
 
 export { onLoad, onUnload };
