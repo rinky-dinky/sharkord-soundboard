@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access, chmod, cp, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { inflateRaw } from 'node:zlib';
 import type { PlainTransport, PluginContext, Producer, TInvokerContext, UnloadPluginContext } from '@sharkord/plugin-sdk';
 import type { TGetSoundDataResponse, TListSoundsResponse, TSoundEntry, TUploadSoundPayload } from '../types';
@@ -28,6 +28,38 @@ const getFfbinariesComponent = (): string => {
 
 type TFfbinariesApiResponse = {
   bin: Record<string, { ffmpeg?: string }>;
+};
+
+// Homebrew installs ffmpeg outside of PATH when Sharkord is launched from a
+// GUI/login-item context (e.g. as a macOS service) rather than a shell, so
+// these are checked in addition to PATH.
+const COMMON_FFMPEG_PATHS = [
+  '/opt/homebrew/bin/ffmpeg', // Apple Silicon Homebrew
+  '/usr/local/bin/ffmpeg', // Intel Homebrew / Linuxbrew
+  '/usr/bin/ffmpeg',
+];
+
+// Looks for an ffmpeg binary already installed on the system, via PATH and
+// common package-manager install locations. Used as a fallback for platforms
+// ffbinaries doesn't publish builds for (e.g. macOS arm64), and to avoid an
+// unnecessary download when the user already has ffmpeg available.
+const findSystemFfmpeg = async (): Promise<string | undefined> => {
+  const binaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const pathDirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
+  const candidates = [
+    ...pathDirs.map((dir) => join(dir, binaryName)),
+    ...(process.platform === 'win32' ? [] : COMMON_FFMPEG_PATHS)
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // not here, keep looking
+    }
+  }
+  return undefined;
 };
 
 // Minimal zip parser — extracts the first entry whose name ends with `entryName`.
@@ -106,8 +138,24 @@ const ensureFfmpegBinary = async (dataPath: string, log: (msg: string) => void):
     // Not present or not executable — download it
   }
 
-  log('[soundboard] ffmpeg not found in bin/, downloading…');
-  await downloadFfmpegBinary(dataPath, log);
+  log('[soundboard] ffmpeg not found in bin/, checking system PATH…');
+  const systemFfmpegPath = await findSystemFfmpeg();
+  if (systemFfmpegPath) {
+    log(`[soundboard] using system ffmpeg at ${systemFfmpegPath}`);
+    return systemFfmpegPath;
+  }
+
+  log('[soundboard] no system ffmpeg found, downloading…');
+  try {
+    await downloadFfmpegBinary(dataPath, log);
+  } catch (error) {
+    const component = getFfbinariesComponent();
+    throw new Error(
+      `Failed to download ffmpeg for ${component} and no system ffmpeg was found on PATH. ` +
+      `Install ffmpeg (e.g. "brew install ffmpeg" on macOS, or your OS package manager) and restart Sharkord. ` +
+      `Underlying error: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 
   // Verify the binary is now accessible and executable
   await access(ffmpegPath, fsConstants.X_OK);
