@@ -1,18 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
+import { callPluginAction } from '../client/call-action';
 import { SoundboardPanel } from './soundboard-panel';
 
-const useSharkordStore = () => {
-  const store = window.__SHARKORD_STORE__;
-  const [state, setState] = useState(() => store.getState());
-  useEffect(() => store.subscribe(() => setState(store.getState())), [store]);
-  return { state, actions: store.actions };
-};
-
 const SoundboardLauncher = () => {
-  const { actions } = useSharkordStore();
-  const { executePluginAction } = actions;
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -124,7 +116,7 @@ const SoundboardLauncher = () => {
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => { setIsPlaying(false); executePluginAction('stop_sounds').catch(() => {}); }}
+                    onClick={() => { setIsPlaying(false); callPluginAction('stop_sounds').catch(() => {}); }}
                     title="Stop all sounds"
                     style={{
                       opacity: isPlaying ? 1 : 0,
